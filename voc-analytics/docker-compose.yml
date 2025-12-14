@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: voc-postgres
+    environment:
+      POSTGRES_USER: vocuser
+      POSTGRES_PASSWORD: vocpassword
+      POSTGRES_DB: vocdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vocuser -d vocdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: voc-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: voc-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: vocuser
+      RABBITMQ_DEFAULT_PASS: vocpassword
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: voc-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vocuser:vocpassword@postgres:5432/vocdb
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://vocuser:vocpassword@rabbitmq:5672/
+      SECRET_KEY: dev-secret-key-change-in-production
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: voc-worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vocuser:vocpassword@postgres:5432/vocdb
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://vocuser:vocpassword@rabbitmq:5672/
+      PYTHONPATH: /app
+    volumes:
+      - ./worker/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: python -u -m app.main
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

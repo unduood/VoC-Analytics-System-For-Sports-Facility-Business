@@ -30,6 +30,12 @@ from app.schemas.analysis import (
     AnalysisResponse,
 )
 
+from app.schemas.webhooks import (
+    EmailWebhookPayload,
+    InstagramWebhookPayload,
+    WebhookResponse,
+)
+
 __all__ = [
     # Enums
     "SourceType",
@@ -57,4 +63,8 @@ __all__ = [
     "AspectSentimentResponse",
     "AnalysisRequest",
     "AnalysisResponse",
+    # Webhook schemas
+    "EmailWebhookPayload",
+    "InstagramWebhookPayload",
+    "WebhookResponse",
 ]

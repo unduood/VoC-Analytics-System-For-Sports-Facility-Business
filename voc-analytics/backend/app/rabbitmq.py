@@ -61,45 +61,81 @@ class RabbitMQManager:
         )
         logger.info(f"Queue '{queue_name}' declared")
 
+    def _ensure_connection(self) -> bool:
+        """
+        Ensure connection is alive, reconnect if needed
+
+        Returns:
+            bool: True if connection is ready, False otherwise
+        """
+        try:
+            # Check if connection exists and is open
+            if self.connection and self.connection.is_open and self.channel and self.channel.is_open:
+                return True
+
+            # Connection is dead, try to reconnect
+            logger.warning("RabbitMQ connection lost, attempting to reconnect...")
+            self.connect()
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to ensure RabbitMQ connection: {e}")
+            return False
+
     def publish_message(
         self,
         queue_name: str,
         message: Dict[str, Any],
-        persistent: bool = True
+        persistent: bool = True,
+        max_retries: int = 3
     ) -> bool:
         """
-        Publish a message to a queue
+        Publish a message to a queue with automatic retry
 
         Args:
             queue_name: Name of the queue
             message: Message data (will be JSON serialized)
             persistent: Whether the message should persist on disk
+            max_retries: Maximum number of retry attempts
 
         Returns:
             bool: True if successful, False otherwise
         """
-        if not self.channel:
-            logger.error("Channel not initialized. Call connect() first.")
-            return False
+        for attempt in range(max_retries):
+            try:
+                # Ensure connection is alive
+                if not self._ensure_connection():
+                    logger.error("Cannot establish RabbitMQ connection")
+                    continue
 
-        try:
-            properties = pika.BasicProperties(
-                delivery_mode=2 if persistent else 1,  # 2 = persistent
-                content_type="application/json"
-            )
+                properties = pika.BasicProperties(
+                    delivery_mode=2 if persistent else 1,  # 2 = persistent
+                    content_type="application/json"
+                )
 
-            self.channel.basic_publish(
-                exchange="",
-                routing_key=queue_name,
-                body=json.dumps(message),
-                properties=properties
-            )
-            logger.info(f"Message published to queue '{queue_name}'")
-            return True
+                self.channel.basic_publish(
+                    exchange="",
+                    routing_key=queue_name,
+                    body=json.dumps(message),
+                    properties=properties
+                )
+                logger.info(f"Message published to queue '{queue_name}'")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to publish message: {e}")
-            return False
+            except (pika.exceptions.AMQPConnectionError, pika.exceptions.AMQPChannelError) as e:
+                logger.warning(f"Connection error on attempt {attempt + 1}/{max_retries}: {e}")
+                # Force reconnection on next attempt
+                self.connection = None
+                self.channel = None
+                if attempt < max_retries - 1:
+                    continue
+
+            except Exception as e:
+                logger.error(f"Failed to publish message: {e}")
+                return False
+
+        logger.error(f"Failed to publish message after {max_retries} attempts")
+        return False
 
     def close(self) -> None:
         """Close RabbitMQ connection"""

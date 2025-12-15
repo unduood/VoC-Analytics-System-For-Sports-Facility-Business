@@ -4,12 +4,15 @@ Main FastAPI application
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import init_db, close_db
 from app.rabbitmq import rabbitmq_manager
+from app.api.v1.router import api_router
+from app.exceptions import VoCAnalyticsException
 
 # Configure logging
 logging.basicConfig(
@@ -76,6 +79,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global exception handlers
+@app.exception_handler(VoCAnalyticsException)
+async def voc_exception_handler(request: Request, exc: VoCAnalyticsException):
+    """Handle custom VoC Analytics exceptions"""
+    logger.error(f"VoCAnalyticsException: {exc.message}", extra=exc.details)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.message,
+            "details": exc.details
+        }
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected exceptions"""
+    logger.error(f"Unexpected error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal server error",
+            "details": {"message": str(exc)} if settings.DEBUG else {}
+        }
+    )
+
+
+# Include API routers
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
 # Health check endpoint

@@ -53,11 +53,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: voc-backend
+    env_file:
+      - .env
     environment:
+      # Override for Docker networking
       DATABASE_URL: postgresql+asyncpg://vocuser:vocpassword@postgres:5432/vocdb
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://vocuser:vocpassword@rabbitmq:5672/
-      SECRET_KEY: dev-secret-key-change-in-production
     ports:
       - "8000:8000"
     volumes:
@@ -76,7 +78,10 @@ services:
       context: ./worker
       dockerfile: Dockerfile
     container_name: voc-worker
+    env_file:
+      - .env
     environment:
+      # Override for Docker networking
       DATABASE_URL: postgresql+asyncpg://vocuser:vocpassword@postgres:5432/vocdb
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://vocuser:vocpassword@rabbitmq:5672/

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"
+    WEBHOOK_SECRET: str = "dev-webhook-secret-change-in-production"
 
     # API
     API_V1_PREFIX: str = "/api/v1"

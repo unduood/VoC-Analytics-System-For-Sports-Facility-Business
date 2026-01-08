@@ -1,17 +1,22 @@
 """
 Worker application for processing messages from RabbitMQ
 """
+import asyncio
 import json
 import logging
 import signal
 import sys
-import time
+from uuid import UUID
 
 import pika
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
+from sqlalchemy import select, update
 
 from app.config import settings
+from app.database import get_db_session
+from app.models import FeedbackRecord, SentimentResult, IntentResult, AspectSentimentResult
+from app.nlp_service import get_nlp_service
 
 # Configure logging
 logging.basicConfig(
@@ -31,9 +36,179 @@ def signal_handler(signum, frame):
     shutdown_flag = True
 
 
+async def process_feedback_analysis(record_id: UUID) -> bool:
+    """
+    Process ML analysis for a feedback record
+
+    Args:
+        record_id: UUID of the feedback record
+
+    Returns:
+        bool: True if processing successful, False otherwise
+    """
+    try:
+        async with get_db_session() as db:
+            # 1. Fetch feedback record
+            logger.info(f"Fetching feedback record: {record_id}")
+            result = await db.execute(
+                select(FeedbackRecord).where(FeedbackRecord.id == record_id)
+            )
+            feedback = result.scalar_one_or_none()
+
+            if not feedback:
+                logger.error(f"Feedback record not found: {record_id}")
+                return False
+
+            logger.info(f"Processing feedback: {feedback.text_content[:100]}...")
+
+            # 2. Update status to 'processing'
+            await db.execute(
+                update(FeedbackRecord)
+                .where(FeedbackRecord.id == record_id)
+                .values(processing_status="processing")
+            )
+            await db.commit()
+
+            # 3. Get NLP service and run analysis
+            logger.info("Running ML analysis...")
+            nlp_service = get_nlp_service()
+
+            # Run individual analyses to get detailed results
+            sentiment_result_data = nlp_service.sentiment.analyze(feedback.text_content)
+            intent_result_data = nlp_service.intent.classify(feedback.text_content)
+            aspect_results_data = nlp_service.absa.analyze(feedback.text_content, include_none=True)  # ✅ เก็บทุก aspect
+
+            # 4. Store sentiment result
+            sentiment_result = SentimentResult(
+                feedback_id=record_id,
+                sentiment=sentiment_result_data['label'],
+                confidence=sentiment_result_data['confidence'],
+                source='model'  # Mark as model prediction
+            )
+            db.add(sentiment_result)
+            logger.info(f"Sentiment: {sentiment_result_data['label']} ({sentiment_result_data['confidence']:.2%})")
+
+            # 5. Store intent results (multi-label, can have multiple intents)
+            # If no intents detected, store primary intent anyway
+            if intent_result_data['labels']:
+                for intent_label in intent_result_data['labels']:
+                    intent_result = IntentResult(
+                        feedback_id=record_id,
+                        intent=intent_label,
+                        confidence=intent_result_data['probabilities'][intent_label],
+                        source='model'  # Mark as model prediction
+                    )
+                    db.add(intent_result)
+                logger.info(f"Intent: {intent_result_data['labels']}")
+            else:
+                # Store the highest probability intent even if below threshold
+                primary = max(intent_result_data['probabilities'], key=intent_result_data['probabilities'].get)
+                intent_result = IntentResult(
+                    feedback_id=record_id,
+                    intent=primary,
+                    confidence=intent_result_data['probabilities'][primary],
+                    source='model'  # Mark as model prediction
+                )
+                db.add(intent_result)
+                logger.info(f"Intent (primary): {primary} ({intent_result_data['probabilities'][primary]:.2%})")
+
+            # 6. Store aspect sentiment results (Hybrid++: exclude 'none')
+            stored_aspects = []
+            for aspect in aspect_results_data:
+                if aspect['sentiment'] != 'none':  # Only store aspects with sentiment
+                    aspect_result = AspectSentimentResult(
+                        feedback_id=record_id,
+                        aspect=aspect['aspect'],
+                        sentiment=aspect['sentiment'],
+                        confidence=aspect['confidence'],
+                        source='model'  # Mark as model prediction
+                    )
+                    db.add(aspect_result)
+                    stored_aspects.append(aspect)
+
+            # Count aspects for logging
+            logger.info(f"Aspects analyzed: {len(aspect_results_data)} total, {len(stored_aspects)} with sentiment stored (excluded {len(aspect_results_data) - len(stored_aspects)} with sentiment='none')")
+
+            # 6.5. Build and store analysis summary (JSONB) - Hybrid++ approach
+            analysis_summary = {
+                "sentiment": {
+                    "label": sentiment_result_data['label'],
+                    "confidence": float(sentiment_result_data['confidence']),
+                    "probabilities": {k: float(v) for k, v in sentiment_result_data.get('probabilities', {}).items()},
+                    "source": "model",
+                    "edited": False
+                },
+                "intents": [
+                    {
+                        "label": label,
+                        "confidence": float(intent_result_data['probabilities'][label]),
+                        "source": "model",
+                        "edited": False
+                    }
+                    for label in (intent_result_data['labels'] if intent_result_data['labels'] else [primary])
+                ],
+                "aspects": [
+                    {
+                        "aspect": a['aspect'],
+                        "aspect_thai": a['aspect_thai'],
+                        "sentiment": a['sentiment'],
+                        "confidence": float(a['confidence']),
+                        "source": "model",
+                        "edited": False
+                    }
+                    for a in stored_aspects  # Only include aspects with sentiment (exclude 'none')
+                ],
+                "summary_stats": {
+                    "total_aspects_analyzed": len(aspect_results_data),  # Total analyzed (including 'none')
+                    "aspects_with_sentiment": len(stored_aspects),  # Only stored (excluding 'none')
+                    "positive_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'positive'),
+                    "negative_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'negative'),
+                    "neutral_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'neutral'),
+                    "model_predictions": len(stored_aspects),  # All current aspects are from model
+                    "user_corrections": 0,
+                    "user_additions": 0
+                }
+            }
+
+            logger.info(f"Summary: {len(stored_aspects)} aspects with sentiment (P:{analysis_summary['summary_stats']['positive_aspects']} N:{analysis_summary['summary_stats']['negative_aspects']} Neu:{analysis_summary['summary_stats']['neutral_aspects']})")
+
+            # 7. Update status to 'completed' and store analysis_summary
+            await db.execute(
+                update(FeedbackRecord)
+                .where(FeedbackRecord.id == record_id)
+                .values(
+                    processing_status="completed",
+                    analysis_summary=analysis_summary
+                )
+            )
+
+            # 8. Commit all changes
+            await db.commit()
+            logger.info(f"✅ Successfully processed feedback: {record_id}")
+
+            return True
+
+    except Exception as e:
+        logger.error(f"Error processing feedback {record_id}: {e}", exc_info=True)
+
+        # Update status to 'failed'
+        try:
+            async with get_db_session() as db:
+                await db.execute(
+                    update(FeedbackRecord)
+                    .where(FeedbackRecord.id == record_id)
+                    .values(processing_status="failed")
+                )
+                await db.commit()
+        except Exception as db_error:
+            logger.error(f"Failed to update status to 'failed': {db_error}")
+
+        return False
+
+
 def process_message(message_data: dict) -> bool:
     """
-    Process a message from the queue
+    Process a message from the queue (synchronous wrapper for async processing)
 
     Args:
         message_data: Message data dictionary
@@ -42,23 +217,30 @@ def process_message(message_data: dict) -> bool:
         bool: True if processing successful, False otherwise
     """
     try:
-        logger.info(f"Processing message: {message_data}")
+        logger.info(f"Received message: {message_data}")
 
-        # Placeholder for actual processing logic
-        # TODO: Implement actual message processing
-        # - Parse message data
-        # - Perform ML analysis
-        # - Store results in database
-        # - Publish results to ml_processing queue
+        # Parse message
+        record_id = UUID(message_data.get('record_id'))
+        action = message_data.get('action', 'analyze')
 
-        # Simulate processing time
-        time.sleep(1)
+        if action != 'analyze':
+            logger.warning(f"Unknown action: {action}")
+            return False
 
-        logger.info("Message processed successfully")
-        return True
+        # Run async processing in event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(process_feedback_analysis(record_id))
+            return success
+        finally:
+            loop.close()
 
+    except ValueError as e:
+        logger.error(f"Invalid record_id in message: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}", exc_info=True)
         return False
 
 
@@ -123,6 +305,19 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     logger.info(f"Starting {settings.WORKER_NAME}...")
+
+    # Pre-load ML models
+    logger.info("="*60)
+    logger.info("🤖 Initializing ML models...")
+    logger.info("="*60)
+    try:
+        nlp_service = get_nlp_service()
+        logger.info("✅ ML models loaded successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to load ML models: {e}")
+        logger.error("Worker cannot start without ML models")
+        sys.exit(1)
+
     logger.info(f"Connecting to RabbitMQ: {settings.RABBITMQ_URL}")
 
     connection = None

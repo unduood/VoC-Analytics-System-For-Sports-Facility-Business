@@ -8,8 +8,10 @@ asyncpg==0.29.0
 
 # Machine Learning
 torch==2.1.2
-transformers==4.37.0
+transformers==4.44.0
+tokenizers==0.19.1
 sentencepiece==0.1.99
+huggingface_hub==0.24.0
 
 # Data validation
 pydantic==2.5.3

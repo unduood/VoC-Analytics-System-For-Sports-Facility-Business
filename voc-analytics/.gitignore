@@ -93,3 +93,19 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Test scripts and data (with secrets or personal testing)
+../test_webhook.ps1
+../test_*.ps1
+../test_payload.json
+../test_*.json
+
+# Personal notebooks and scratch work
+../*.ipynb
+../thai_nlp_*.ipynb
+
+# Draft documentation (work-in-progress)
+../DATABASE_SCHEMA_IMPROVEMENT.md
+../ML_INTEGRATION_COMPLETE.md
+../*_DRAFT.md
+../*_WIP.md

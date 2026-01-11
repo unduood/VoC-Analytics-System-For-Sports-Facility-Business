@@ -1,6 +1,8 @@
 """
 Application configuration using Pydantic Settings
 """
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +29,10 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
+
+    # Google Maps / SerpAPI (Optional - can be passed in request)
+    SERPAPI_KEY: Optional[str] = None
+    GOOGLE_MAPS_DATA_ID: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

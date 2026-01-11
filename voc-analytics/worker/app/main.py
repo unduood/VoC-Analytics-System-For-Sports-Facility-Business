@@ -36,6 +36,32 @@ def signal_handler(signum, frame):
     shutdown_flag = True
 
 
+def rating_to_sentiment(rating: int) -> str:
+    """
+    Convert Google Maps rating (0-5) to sentiment label
+
+    Mapping:
+    - 0, 1, 2 → "negative"
+    - 3 → "neutral"
+    - 4, 5 → "positive"
+
+    Args:
+        rating: Integer rating 0-5
+
+    Returns:
+        Sentiment label string
+    """
+    if rating in [0, 1, 2]:
+        return "negative"
+    elif rating == 3:
+        return "neutral"
+    elif rating in [4, 5]:
+        return "positive"
+    else:
+        logger.warning(f"Unexpected rating value: {rating}, defaulting to neutral")
+        return "neutral"
+
+
 async def process_feedback_analysis(record_id: UUID) -> bool:
     """
     Process ML analysis for a feedback record
@@ -69,26 +95,56 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             )
             await db.commit()
 
-            # 3. Get NLP service and run analysis
+            # 3. Check if this is Google Maps review with rating
+            is_google_maps = feedback.source_type == "google_maps"
+            rating = feedback.raw_data.get("rating") if feedback.raw_data else None
+            use_rating_sentiment = is_google_maps and rating is not None
+
             logger.info("Running ML analysis...")
             nlp_service = get_nlp_service()
 
-            # Run individual analyses to get detailed results
-            sentiment_result_data = nlp_service.sentiment.analyze(feedback.text_content)
-            intent_result_data = nlp_service.intent.classify(feedback.text_content)
-            aspect_results_data = nlp_service.absa.analyze(feedback.text_content, include_none=True)  # ✅ เก็บทุก aspect
+            # 4a. Sentiment Analysis - Rating-based OR Model-based
+            if use_rating_sentiment:
+                # RATING-BASED SENTIMENT (Bypass ML Model)
+                sentiment_label = rating_to_sentiment(rating)
+                sentiment_result_data = {
+                    'label': sentiment_label,
+                    'confidence': 1.0,  # 100% confidence from rating
+                    'probabilities': {sentiment_label: 1.0}
+                }
+                logger.info(
+                    f"Using rating-based sentiment for Google Maps review: "
+                    f"rating={rating} → sentiment={sentiment_label}"
+                )
+            else:
+                # MODEL-BASED SENTIMENT (Original behavior)
+                sentiment_result_data = nlp_service.sentiment.analyze(feedback.text_content)
+                logger.info(
+                    f"Using model-based sentiment: {sentiment_result_data['label']} "
+                    f"({sentiment_result_data['confidence']:.2%})"
+                )
 
-            # 4. Store sentiment result
+            # 4b. Intent Analysis (ALWAYS run model)
+            intent_result_data = nlp_service.intent.classify(feedback.text_content)
+
+            # 4c. ABSA Analysis (ALWAYS run model)
+            aspect_results_data = nlp_service.absa.analyze(feedback.text_content, include_none=True)
+
+            # 5. Store sentiment result with correct source
             sentiment_result = SentimentResult(
                 feedback_id=record_id,
                 sentiment=sentiment_result_data['label'],
                 confidence=sentiment_result_data['confidence'],
-                source='model'  # Mark as model prediction
+                source='rating' if use_rating_sentiment else 'model'  # ✅ Track source
             )
             db.add(sentiment_result)
-            logger.info(f"Sentiment: {sentiment_result_data['label']} ({sentiment_result_data['confidence']:.2%})")
+            logger.info(
+                f"Sentiment: {sentiment_result_data['label']} "
+                f"({sentiment_result_data['confidence']:.2%}) "
+                f"[source: {'rating' if use_rating_sentiment else 'model'}]"
+            )
 
-            # 5. Store intent results (multi-label, can have multiple intents)
+            # 6. Store intent results (multi-label, can have multiple intents)
             # If no intents detected, store primary intent anyway
             if intent_result_data['labels']:
                 for intent_label in intent_result_data['labels']:
@@ -112,7 +168,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 db.add(intent_result)
                 logger.info(f"Intent (primary): {primary} ({intent_result_data['probabilities'][primary]:.2%})")
 
-            # 6. Store aspect sentiment results (Hybrid++: exclude 'none')
+            # 7. Store aspect sentiment results (Hybrid++: exclude 'none')
             stored_aspects = []
             for aspect in aspect_results_data:
                 if aspect['sentiment'] != 'none':  # Only store aspects with sentiment
@@ -129,13 +185,14 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             # Count aspects for logging
             logger.info(f"Aspects analyzed: {len(aspect_results_data)} total, {len(stored_aspects)} with sentiment stored (excluded {len(aspect_results_data) - len(stored_aspects)} with sentiment='none')")
 
-            # 6.5. Build and store analysis summary (JSONB) - Hybrid++ approach
+            # 8. Build and store analysis summary (JSONB) - Hybrid++ approach
             analysis_summary = {
                 "sentiment": {
                     "label": sentiment_result_data['label'],
                     "confidence": float(sentiment_result_data['confidence']),
                     "probabilities": {k: float(v) for k, v in sentiment_result_data.get('probabilities', {}).items()},
-                    "source": "model",
+                    "source": "rating" if use_rating_sentiment else "model",  # ✅ Track source
+                    "rating": rating if use_rating_sentiment else None,  # ✅ Include rating if used
                     "edited": False
                 },
                 "intents": [
@@ -172,7 +229,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
 
             logger.info(f"Summary: {len(stored_aspects)} aspects with sentiment (P:{analysis_summary['summary_stats']['positive_aspects']} N:{analysis_summary['summary_stats']['negative_aspects']} Neu:{analysis_summary['summary_stats']['neutral_aspects']})")
 
-            # 7. Update status to 'completed' and store analysis_summary
+            # 9. Update status to 'completed' and store analysis_summary
             await db.execute(
                 update(FeedbackRecord)
                 .where(FeedbackRecord.id == record_id)
@@ -182,7 +239,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 )
             )
 
-            # 8. Commit all changes
+            # 10. Commit all changes
             await db.commit()
             logger.info(f"✅ Successfully processed feedback: {record_id}")
 

@@ -78,3 +78,13 @@ class ValidationError(VoCAnalyticsException):
             status_code=422,
             details=details
         )
+
+
+class FacebookGraphAPIError(VoCAnalyticsException):
+    """Raised when Facebook Graph API request fails"""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=f"Facebook Graph API error: {message}",
+            status_code=502,  # Bad Gateway - external API error
+            details=details
+        )

@@ -10,7 +10,7 @@ alembic==1.13.1
 
 # Message Queue and Cache
 pika==1.3.2
-redis==5.0.1
+redis[asyncio]==5.0.1
 
 # HTTP Client
 httpx==0.26.0
@@ -21,3 +21,6 @@ pydantic-settings==2.1.0
 
 # Environment
 python-dotenv==1.0.0
+
+# Date parsing
+python-dateutil==2.8.2

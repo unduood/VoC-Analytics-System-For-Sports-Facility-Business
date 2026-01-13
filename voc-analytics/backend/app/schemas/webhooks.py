@@ -2,7 +2,7 @@
 Webhook schemas for external platform integrations
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any, Dict, List
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -29,9 +29,22 @@ class InstagramWebhookPayload(BaseModel):
     post_timestamp: datetime = Field(..., description="Post creation timestamp")
 
 
+class FacebookWebhookEntry(BaseModel):
+    """Facebook webhook entry structure"""
+    id: str = Field(..., description="Page ID")
+    time: int = Field(..., description="Unix timestamp in milliseconds")
+    changes: List[Dict[str, Any]] = Field(..., description="Array of changes")
+
+
+class FacebookWebhookPayload(BaseModel):
+    """Root Facebook webhook payload structure"""
+    object: str = Field(..., description="Object type (should be 'page')")
+    entry: List[FacebookWebhookEntry] = Field(..., description="Array of entries")
+
+
 class WebhookResponse(BaseModel):
     """Standard response for webhook endpoints"""
     status: str = Field(..., description="Response status")
     message: str = Field(..., description="Response message")
-    record_id: UUID = Field(..., description="Created feedback record ID")
+    record_id: Optional[UUID] = Field(None, description="Created feedback record ID (optional)")
     source_type: str = Field(..., description="Feedback source type")

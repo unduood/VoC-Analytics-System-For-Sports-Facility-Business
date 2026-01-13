@@ -60,6 +60,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://vocuser:vocpassword@postgres:5432/vocdb
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://vocuser:vocpassword@rabbitmq:5672/
+      # Facebook Configuration (ensure these are loaded from .env)
+      FACEBOOK_VERIFY_TOKEN: ${FACEBOOK_VERIFY_TOKEN}
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${FACEBOOK_PAGE_ACCESS_TOKEN}
     ports:
       - "8000:8000"
     volumes:

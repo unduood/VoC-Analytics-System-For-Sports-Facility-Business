@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     SERPAPI_KEY: Optional[str] = None
     GOOGLE_MAPS_DATA_ID: Optional[str] = None
 
+    # Facebook Configuration (Optional - can be passed in request)
+    FACEBOOK_APP_ID: Optional[str] = None
+    FACEBOOK_APP_SECRET: Optional[str] = None
+    FACEBOOK_VERIFY_TOKEN: str = "fb-verify-token-change-in-production"
+    FACEBOOK_PAGE_ACCESS_TOKEN: Optional[str] = None
+    FACEBOOK_GRAPH_API_VERSION: str = "v24.0"  # Latest Facebook Graph API version
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

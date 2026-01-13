@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import init_db, close_db
 from app.rabbitmq import rabbitmq_manager
+from app.redis_client import redis_manager
 from app.api.v1.router import api_router
 from app.exceptions import VoCAnalyticsException
 
@@ -31,6 +32,24 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up VoC Analytics Backend...")
 
     try:
+        # Validate Facebook webhook configuration
+        logger.info("Validating Facebook webhook configuration...")
+        if not settings.FACEBOOK_APP_SECRET:
+            logger.warning(
+                "FACEBOOK_APP_SECRET not configured. "
+                "Facebook webhooks will not work without this setting."
+            )
+        else:
+            logger.info("Facebook webhook signature validation enabled")
+
+        if not settings.FACEBOOK_PAGE_ACCESS_TOKEN:
+            logger.warning(
+                "FACEBOOK_PAGE_ACCESS_TOKEN not configured. "
+                "Facebook Graph API calls will fail."
+            )
+        else:
+            logger.info("Facebook Graph API access configured")
+
         # Initialize database
         logger.info("Initializing database...")
         await init_db()
@@ -40,6 +59,11 @@ async def lifespan(app: FastAPI):
         logger.info("Connecting to RabbitMQ...")
         rabbitmq_manager.connect()
         logger.info("RabbitMQ connected successfully")
+
+        # Connect to Redis
+        logger.info("Connecting to Redis...")
+        await redis_manager.connect()
+        logger.info("Redis connected successfully")
 
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -54,6 +78,10 @@ async def lifespan(app: FastAPI):
         # Close RabbitMQ connection
         rabbitmq_manager.close()
         logger.info("RabbitMQ connection closed")
+
+        # Close Redis connection
+        await redis_manager.disconnect()
+        logger.info("Redis connection closed")
 
         # Close database connection
         await close_db()

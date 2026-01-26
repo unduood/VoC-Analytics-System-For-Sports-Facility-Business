@@ -14,6 +14,12 @@ from app.rabbitmq import rabbitmq_manager
 from app.redis_client import redis_manager
 from app.api.v1.router import api_router
 from app.exceptions import VoCAnalyticsException
+from app.websocket.manager import sio, broadcast_event, create_socket_app
+from app.websocket.redis_subscriber import (
+    redis_subscriber,
+    CHANNEL_FEEDBACK_NEW,
+    CHANNEL_FEEDBACK_COMPLETED
+)
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +71,20 @@ async def lifespan(app: FastAPI):
         await redis_manager.connect()
         logger.info("Redis connected successfully")
 
+        # Start WebSocket Redis subscriber
+        logger.info("Starting WebSocket Redis subscriber...")
+        await redis_subscriber.connect()
+
+        async def handle_redis_message(channel: str, data: dict):
+            """Forward Redis pub/sub messages to WebSocket clients"""
+            if channel == CHANNEL_FEEDBACK_NEW:
+                await broadcast_event('feedback:new', data)
+            elif channel == CHANNEL_FEEDBACK_COMPLETED:
+                await broadcast_event('feedback:completed', data)
+
+        await redis_subscriber.subscribe(handle_redis_message)
+        logger.info("WebSocket Redis subscriber started")
+
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
@@ -75,6 +95,10 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down VoC Analytics Backend...")
 
     try:
+        # Stop WebSocket Redis subscriber
+        await redis_subscriber.disconnect()
+        logger.info("WebSocket Redis subscriber stopped")
+
         # Close RabbitMQ connection
         rabbitmq_manager.close()
         logger.info("RabbitMQ connection closed")
@@ -197,10 +221,15 @@ async def test_publish_message(message: dict):
         }
 
 
+# Create Socket.IO ASGI app wrapping FastAPI
+# This is the main application entry point for uvicorn
+socket_app = create_socket_app(app)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "app.main:app",
+        "app.main:socket_app",
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG

@@ -5,21 +5,28 @@ import logging
 from typing import Optional
 from uuid import UUID
 from math import ceil
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, exists, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.feedback import FeedbackRecord
+from app.models.analysis import SentimentResult, IntentResult
 from app.schemas.feedback import (
     FeedbackResponse,
     FeedbackDetailResponse,
     FeedbackListResponse,
-    ProcessingStatus
+    FeedbackWithAnalysisResponse,
+    ProcessingStatus,
+    ManualFeedbackCreate
 )
+from app.schemas.analysis import Sentiment, Intent
 from app.exceptions import FeedbackNotFoundError
+from app.services.ingestion import IngestionService
+from app.services.broadcast_service import broadcast_new_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,11 @@ async def list_feedback(
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     source_type: Optional[str] = Query(None, description="Filter by source type"),
     processing_status: Optional[ProcessingStatus] = Query(None, description="Filter by processing status"),
+    sentiment: Optional[Sentiment] = Query(None, description="Filter by sentiment (positive, neutral, negative)"),
+    intent: Optional[Intent] = Query(None, description="Filter by intent (feedback, question, complaint, off_topic)"),
+    search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in text content"),
+    start_date: Optional[date] = Query(None, description="Filter by start date (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Filter by end date (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -42,6 +54,11 @@ async def list_feedback(
     - page_size: Items per page (default: 20, max: 100)
     - source_type: Filter by source type (email, instagram, etc.)
     - processing_status: Filter by processing status (pending, processing, completed, failed)
+    - sentiment: Filter by sentiment analysis result (positive, neutral, negative)
+    - intent: Filter by intent classification result (feedback, question, complaint, off_topic)
+    - search: Search keyword in text content (case-insensitive)
+    - start_date: Filter records created on or after this date (ISO format)
+    - end_date: Filter records created on or before this date (ISO format)
 
     **Returns:**
     - items: List of feedback records
@@ -51,23 +68,81 @@ async def list_feedback(
     - total_pages: Total number of pages
     """
     try:
-        # Build base query
-        query = select(FeedbackRecord)
+        # Build filter conditions list
+        filter_conditions = []
 
-        # Apply filters
+        # Use COALESCE for effective date (created_at_source with fallback to created_at)
+        # This ensures manual feedback (which has no created_at_source) uses created_at
+        effective_date = func.coalesce(FeedbackRecord.created_at_source, FeedbackRecord.created_at)
+
+        # Basic filters
         if source_type:
-            query = query.where(FeedbackRecord.source_type == source_type)
+            filter_conditions.append(FeedbackRecord.source_type == source_type)
         if processing_status:
-            query = query.where(FeedbackRecord.processing_status == processing_status.value)
+            filter_conditions.append(FeedbackRecord.processing_status == processing_status.value)
 
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
+        # Search filter (case-insensitive)
+        if search:
+            filter_conditions.append(FeedbackRecord.text_content.ilike(f"%{search}%"))
+
+        # Date range filters using effective_date (created_at_source with fallback)
+        if start_date:
+            # Start of the day (00:00:00)
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            filter_conditions.append(effective_date >= start_datetime)
+        if end_date:
+            # End of the day (use next day's start for exclusive upper bound)
+            end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+            filter_conditions.append(effective_date < end_datetime)
+
+        # Sentiment filter (using EXISTS subquery)
+        if sentiment:
+            sentiment_exists = exists(
+                select(SentimentResult.id).where(
+                    and_(
+                        SentimentResult.feedback_id == FeedbackRecord.id,
+                        SentimentResult.sentiment == sentiment.value,
+                        SentimentResult.is_deleted == False
+                    )
+                )
+            )
+            filter_conditions.append(sentiment_exists)
+
+        # Intent filter (using EXISTS subquery)
+        if intent:
+            intent_exists = exists(
+                select(IntentResult.id).where(
+                    and_(
+                        IntentResult.feedback_id == FeedbackRecord.id,
+                        IntentResult.intent == intent.value,
+                        IntentResult.is_deleted == False
+                    )
+                )
+            )
+            filter_conditions.append(intent_exists)
+
+        # Build base query with eager loading of relationships
+        query = select(FeedbackRecord).options(
+            selectinload(FeedbackRecord.sentiment_results),
+            selectinload(FeedbackRecord.intent_results),
+            selectinload(FeedbackRecord.aspect_sentiment_results)
+        )
+
+        # Apply all filters
+        if filter_conditions:
+            query = query.where(and_(*filter_conditions))
+
+        # Get total count (without relationships for efficiency)
+        count_base = select(FeedbackRecord)
+        if filter_conditions:
+            count_base = count_base.where(and_(*filter_conditions))
+        count_query = select(func.count()).select_from(count_base.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar()
 
-        # Apply pagination
+        # Apply pagination and order by effective date (created_at_source with fallback)
         offset = (page - 1) * page_size
-        query = query.order_by(FeedbackRecord.created_at.desc()).offset(offset).limit(page_size)
+        query = query.order_by(effective_date.desc()).offset(offset).limit(page_size)
 
         # Execute query
         result = await db.execute(query)
@@ -77,7 +152,7 @@ async def list_feedback(
         total_pages = ceil(total / page_size) if total > 0 else 0
 
         return FeedbackListResponse(
-            items=[FeedbackResponse.model_validate(record) for record in records],
+            items=[FeedbackWithAnalysisResponse.from_orm_with_analysis(record) for record in records],
             total=total,
             page=page,
             page_size=page_size,
@@ -180,4 +255,53 @@ async def delete_feedback(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error deleting feedback record"
+        )
+
+
+@router.post("/manual", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)
+async def create_manual_feedback(
+    feedback_data: ManualFeedbackCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit manual feedback for processing
+
+    **Request Body:**
+    - text_content: The feedback text content (required)
+
+    **Returns:**
+    - Created feedback record with processing status 'pending'
+    """
+    try:
+        # Create feedback record and publish to queue for ML analysis
+        ingestion_service = IngestionService(db)
+
+        # Generate unique source_id for manual feedback
+        import uuid
+        manual_source_id = f"manual_{uuid.uuid4().hex[:12]}"
+
+        feedback_record = await ingestion_service.ingest_and_publish(
+            source_type="manual",
+            source_id=manual_source_id,
+            text_content=feedback_data.text_content,
+            raw_data={"submitted_manually": True},
+            created_at_source=None
+        )
+
+        # Broadcast new feedback event via WebSocket
+        await broadcast_new_feedback(
+            feedback_id=feedback_record.id,
+            source_type="manual",
+            text_content=feedback_data.text_content
+        )
+
+        logger.info(f"Created manual feedback record: {feedback_record.id}")
+
+        return FeedbackResponse.model_validate(feedback_record)
+
+    except Exception as e:
+        logger.error(f"Error creating manual feedback: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error creating feedback record"
         )

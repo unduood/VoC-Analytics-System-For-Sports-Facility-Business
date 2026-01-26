@@ -28,5 +28,5 @@ EXPOSE 8000
 # Set entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application (socket_app wraps FastAPI with Socket.IO)
+CMD ["uvicorn", "app.main:socket_app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,343 @@
+'use client';
+
+import { Modal } from '@/components/ui/Modal';
+import { Badge } from '@/components/ui/Badge';
+import { format } from 'date-fns';
+import { th } from 'date-fns/locale';
+import {
+  Mail,
+  Instagram,
+  Facebook,
+  MapPin,
+  FileText,
+  PenLine,
+  Clock,
+  TrendingUp,
+  MessageSquare,
+  Tag,
+  Info,
+} from 'lucide-react';
+import type {
+  FeedbackWithAnalysis,
+  SourceType,
+  SentimentLabel,
+  IntentLabel,
+  AspectLabel,
+  AnalysisSource,
+} from '@/lib/types';
+import { SourceDetails } from './source-details';
+import { AnalysisSourceLabel } from './AnalysisSourceLabel';
+
+interface FeedbackDetailModalProps {
+  feedback: FeedbackWithAnalysis | null;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const sourceIcons: Record<SourceType, React.ReactNode> = {
+  email: <Mail className="w-4 h-4" />,
+  instagram: <Instagram className="w-4 h-4" />,
+  facebook: <Facebook className="w-4 h-4" />,
+  google_maps: <MapPin className="w-4 h-4" />,
+  google_form: <FileText className="w-4 h-4" />,
+  manual: <PenLine className="w-4 h-4" />,
+};
+
+const sourceLabels: Record<SourceType, string> = {
+  email: 'อีเมล',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  google_maps: 'Google Maps',
+  google_form: 'Google Forms',
+  manual: 'บันทึกเอง',
+};
+
+const sentimentConfig: Record<SentimentLabel, { label: string; color: string; bgColor: string }> = {
+  positive: { label: 'เชิงบวก', color: 'text-green-700', bgColor: 'bg-green-100' },
+  neutral: { label: 'เป็นกลาง', color: 'text-amber-700', bgColor: 'bg-amber-100' },
+  negative: { label: 'เชิงลบ', color: 'text-red-700', bgColor: 'bg-red-100' },
+};
+
+const intentLabels: Record<IntentLabel, string> = {
+  feedback: 'ข้อเสนอแนะ',
+  question: 'คำถาม',
+  complaint: 'ข้อร้องเรียน',
+  off_topic: 'นอกเรื่อง',
+};
+
+const aspectLabels: Record<AspectLabel, string> = {
+  equipment: 'อุปกรณ์',
+  staff: 'พนักงาน',
+  cleanliness: 'ความสะอาด',
+  atmosphere: 'บรรยากาศ',
+  price: 'ราคา',
+  location: 'ทำเล',
+  programs: 'โปรแกรม',
+  amenities: 'สิ่งอำนวยความสะดวก',
+};
+
+const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
+  pending: { label: 'รอดำเนินการ', color: 'text-gray-700', bgColor: 'bg-gray-100' },
+  processing: { label: 'กำลังประมวลผล', color: 'text-blue-700', bgColor: 'bg-blue-100' },
+  completed: { label: 'เสร็จสิ้น', color: 'text-green-700', bgColor: 'bg-green-100' },
+  failed: { label: 'ล้มเหลว', color: 'text-red-700', bgColor: 'bg-red-100' },
+};
+
+// Type definitions for analysis_summary JSONB structure
+interface AnalysisSummaryAspect {
+  aspect: string;
+  aspect_thai?: string;
+  sentiment: string;
+  confidence: number;
+  source: AnalysisSource;
+  edited: boolean;
+}
+
+interface AnalysisSummaryIntent {
+  label: string;
+  confidence: number;
+  source: AnalysisSource;
+  edited: boolean;
+}
+
+interface AnalysisSummarySentiment {
+  label: string;
+  confidence: number;
+  source: AnalysisSource;
+  rating?: number | null;
+  edited: boolean;
+}
+
+interface AnalysisSummary {
+  sentiment?: AnalysisSummarySentiment;
+  intents?: AnalysisSummaryIntent[];
+  aspects?: AnalysisSummaryAspect[];
+  summary_stats?: {
+    total_aspects_analyzed?: number;
+    aspects_with_sentiment?: number;
+    positive_aspects?: number;
+    negative_aspects?: number;
+    neutral_aspects?: number;
+  };
+}
+
+export function FeedbackDetailModal({ feedback, isOpen, onClose }: FeedbackDetailModalProps) {
+  if (!feedback) return null;
+
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return '-';
+    try {
+      return format(new Date(dateString), 'PPpp', { locale: th });
+    } catch {
+      return dateString;
+    }
+  };
+
+  const status = statusConfig[feedback.processing_status] || statusConfig.pending;
+
+  // Parse analysis_summary JSONB - this contains the source for EACH label
+  const analysisSummary = feedback.analysis_summary as AnalysisSummary | null;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="รายละเอียดข้อเสนอแนะ" size="lg">
+      <div className="space-y-6">
+        {/* Header Info */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 text-gray-600">
+            {sourceIcons[feedback.source_type]}
+            <span className="text-sm font-medium">{sourceLabels[feedback.source_type]}</span>
+          </div>
+          <Badge className={`${status.bgColor} ${status.color}`}>{status.label}</Badge>
+          <div className="flex items-center gap-1 text-sm text-gray-500">
+            <Clock className="w-4 h-4" />
+            {formatDate(feedback.created_at_source || feedback.created_at)}
+          </div>
+        </div>
+
+        {/* Text Content */}
+        <div className="bg-gray-50 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">ข้อความ</h3>
+          <p className="text-gray-900 whitespace-pre-wrap">{feedback.text_content}</p>
+        </div>
+
+        {/* Source-specific Details */}
+        {feedback.raw_data && Object.keys(feedback.raw_data).length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Info className="w-4 h-4 text-gray-500" />
+              <h3 className="text-sm font-semibold text-gray-700">ข้อมูลจากแหล่งที่มา</h3>
+            </div>
+            <SourceDetails
+              sourceType={feedback.source_type}
+              rawData={feedback.raw_data}
+            />
+          </div>
+        )}
+
+        {/* Analysis Results */}
+        {feedback.processing_status === 'completed' && (
+          <div className="space-y-4">
+            {/* Sentiment */}
+            {feedback.sentiment_result && !feedback.sentiment_result.is_deleted && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <TrendingUp className="w-4 h-4 text-gray-600" />
+                  <h3 className="text-sm font-semibold text-gray-700">การวิเคราะห์ความรู้สึก</h3>
+                </div>
+                <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-3">
+                    <Badge
+                      className={`${sentimentConfig[feedback.sentiment_result.sentiment].bgColor} ${sentimentConfig[feedback.sentiment_result.sentiment].color}`}
+                    >
+                      {sentimentConfig[feedback.sentiment_result.sentiment].label}
+                    </Badge>
+                    <span className="text-sm text-gray-500">
+                      ความมั่นใจ: {(feedback.sentiment_result.confidence * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  {/* Use source directly from result, fallback to analysis_summary for rating value */}
+                  <AnalysisSourceLabel
+                    source={(feedback.sentiment_result.source || analysisSummary?.sentiment?.source || 'model') as AnalysisSource}
+                    ratingValue={analysisSummary?.sentiment?.rating}
+                    showTooltip={true}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Intent */}
+            {feedback.intent_results && feedback.intent_results.length > 0 && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <MessageSquare className="w-4 h-4 text-gray-600" />
+                  <h3 className="text-sm font-semibold text-gray-700">ประเภทข้อความ</h3>
+                </div>
+                <div className="space-y-2">
+                  {feedback.intent_results
+                    .filter((intent) => !intent.is_deleted)
+                    .map((intent) => {
+                      // Use source directly from result, fallback to analysis_summary by label match
+                      const summaryIntent = analysisSummary?.intents?.find(
+                        (i) => i.label === intent.intent
+                      );
+                      const intentSource = intent.source || summaryIntent?.source || 'model';
+                      return (
+                        <div
+                          key={intent.id}
+                          className="flex items-center justify-between bg-gray-50 rounded-lg p-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Badge variant="outline">
+                              {intentLabels[intent.intent]}
+                            </Badge>
+                            <span className="text-sm text-gray-500">
+                              ความมั่นใจ: {(intent.confidence * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <AnalysisSourceLabel
+                            source={intentSource as AnalysisSource}
+                            showTooltip={true}
+                          />
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {/* Aspects */}
+            {feedback.aspect_results && feedback.aspect_results.length > 0 && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Tag className="w-4 h-4 text-gray-600" />
+                  <h3 className="text-sm font-semibold text-gray-700">แง่มุมที่กล่าวถึง</h3>
+                </div>
+                <div className="space-y-2">
+                  {feedback.aspect_results
+                    .filter((aspect) => !aspect.is_deleted)
+                    .map((aspect) => {
+                      // Use source directly from result, fallback to analysis_summary by aspect match
+                      const summaryAspect = analysisSummary?.aspects?.find(
+                        (a) => a.aspect === aspect.aspect
+                      );
+                      const aspectSource = aspect.source || summaryAspect?.source || 'model';
+                      return (
+                        <div
+                          key={aspect.id}
+                          className="flex items-center justify-between bg-gray-50 rounded-lg p-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-700">{aspectLabels[aspect.aspect]}</span>
+                            <Badge
+                              size="sm"
+                              className={`${sentimentConfig[aspect.sentiment].bgColor} ${sentimentConfig[aspect.sentiment].color}`}
+                            >
+                              {sentimentConfig[aspect.sentiment].label}
+                            </Badge>
+                            <span className="text-sm text-gray-500">
+                              ความมั่นใจ: {(aspect.confidence * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <AnalysisSourceLabel
+                            source={aspectSource as AnalysisSource}
+                            showTooltip={true}
+                          />
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Processing Status Message */}
+        {feedback.processing_status === 'pending' && (
+          <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
+            รอการประมวลผล...
+          </div>
+        )}
+
+        {feedback.processing_status === 'processing' && (
+          <div className="bg-blue-50 rounded-lg p-4 text-center text-blue-600">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2" />
+            กำลังวิเคราะห์ด้วย AI...
+          </div>
+        )}
+
+        {feedback.processing_status === 'failed' && (
+          <div className="bg-red-50 rounded-lg p-4 text-center text-red-600">
+            การวิเคราะห์ล้มเหลว กรุณาลองใหม่อีกครั้ง
+          </div>
+        )}
+
+        {/* Metadata */}
+        <div className="pt-4 border-t border-gray-200">
+          <div className="text-xs text-gray-500 mb-2 font-medium">ข้อมูลอ้างอิง</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="flex flex-col">
+              <span className="text-gray-400">ID ในระบบ</span>
+              <span className="text-gray-600 font-mono truncate" title={feedback.id}>
+                {feedback.id.slice(0, 8)}...
+              </span>
+            </div>
+            {feedback.source_id && (
+              <div className="flex flex-col">
+                <span className="text-gray-400">ID จาก {sourceLabels[feedback.source_type]}</span>
+                <span className="text-gray-600 font-mono truncate" title={feedback.source_id}>
+                  {feedback.source_id.length > 20
+                    ? `${feedback.source_id.slice(0, 20)}...`
+                    : feedback.source_id}
+                </span>
+              </div>
+            )}
+            <div className="flex flex-col sm:col-span-2">
+              <span className="text-gray-400">อัปเดตล่าสุด</span>
+              <span className="text-gray-600">{formatDate(feedback.updated_at)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}

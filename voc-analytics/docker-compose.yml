@@ -75,7 +75,7 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:socket_app --host 0.0.0.0 --port 8000 --reload
 
   worker:
     build:
@@ -100,6 +100,19 @@ services:
       rabbitmq:
         condition: service_healthy
     command: python -u -m app.main
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: voc-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   postgres_data:

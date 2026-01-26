@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from dateutil import parser as date_parser
+from datetime import timezone
 
 from app.database import get_db
 from app.config import settings
@@ -33,6 +34,7 @@ from app.exceptions import (
 )
 from app.models.feedback import FeedbackRecord
 from app.models.analysis import SentimentResult, IntentResult, AspectSentimentResult
+from app.services.broadcast_service import broadcast_new_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +192,13 @@ async def receive_email_webhook(
             created_at_source=payload.received_at
         )
 
+        # Broadcast new feedback event via WebSocket
+        await broadcast_new_feedback(
+            feedback_id=record.id,
+            source_type="email",
+            text_content=payload.body_text
+        )
+
         logger.info(f"Successfully processed email webhook: {record.id}")
 
         return WebhookResponse(
@@ -265,6 +274,13 @@ async def receive_instagram_webhook(
                 "post_timestamp": payload.post_timestamp.isoformat()
             },
             created_at_source=payload.comment_timestamp
+        )
+
+        # Broadcast new feedback event via WebSocket
+        await broadcast_new_feedback(
+            feedback_id=record.id,
+            source_type="instagram",
+            text_content=payload.comment_text
         )
 
         logger.info(f"Successfully processed Instagram webhook: {record.id}")
@@ -357,7 +373,7 @@ async def receive_facebook_webhook(
     - status: Response status
     - message: Success message
     - record_id: Created feedback record UUID (optional)
-    - source_type: "facebook_page_comment"
+    - source_type: "facebook"
 
     **Idempotency:**
     - Duplicate webhook deliveries are detected and skipped
@@ -379,7 +395,7 @@ async def receive_facebook_webhook(
                 status="error",
                 message="Facebook service not properly configured",
                 record_id=None,
-                source_type="facebook_page_comment"
+                source_type="facebook"
             )
 
         record = None  # Track last processed record
@@ -455,7 +471,7 @@ async def receive_facebook_webhook(
             status="success",
             message="Facebook webhook processed successfully",
             record_id=record.id if record else None,
-            source_type="facebook_page_comment"
+            source_type="facebook"
         )
 
     except FacebookGraphAPIError as e:
@@ -466,7 +482,7 @@ async def receive_facebook_webhook(
             status="partial_success",
             message=f"Webhook received but Graph API error: {str(e)}",
             record_id=None,
-            source_type="facebook_page_comment"
+            source_type="facebook"
         )
     except (DatabaseError, QueuePublishError) as e:
         logger.error(f"Error processing Facebook webhook: {e}")
@@ -476,7 +492,7 @@ async def receive_facebook_webhook(
             status="error",
             message=f"Internal processing error: {e.message}",
             record_id=None,
-            source_type="facebook_page_comment"
+            source_type="facebook"
         )
     except Exception as e:
         logger.error(f"Unexpected error processing Facebook webhook: {e}", exc_info=True)
@@ -485,7 +501,7 @@ async def receive_facebook_webhook(
             status="error",
             message="Internal server error - webhook logged for review",
             record_id=None,
-            source_type="facebook_page_comment"
+            source_type="facebook"
         )
 
 
@@ -543,14 +559,15 @@ async def handle_new_comment(
         logger.warning(f"Post ID not found in webhook for comment {comment_id}")
         post_id = None
 
-    # Convert Unix timestamp to datetime object
+    # Convert Unix timestamp to datetime object (UTC)
+    # Facebook sends Unix timestamps which are always in UTC
     created_at_source = None
     comment_created_time_iso = None
     if comment_created_time_unix:
         try:
-            # Convert Unix timestamp to datetime
-            created_at_source = datetime.fromtimestamp(comment_created_time_unix)
-            # Also keep ISO format for raw_data
+            # Convert Unix timestamp to UTC datetime (timezone-aware)
+            created_at_source = datetime.fromtimestamp(comment_created_time_unix, tz=timezone.utc)
+            # Store ISO format with timezone for raw_data
             comment_created_time_iso = created_at_source.isoformat()
             logger.debug(f"Converted Unix timestamp {comment_created_time_unix} to {comment_created_time_iso}")
         except (ValueError, TypeError, OSError) as e:
@@ -600,11 +617,18 @@ async def handle_new_comment(
     # - raw_data: flat structure with all comment and post data
     # - created_at_source: datetime object from Unix timestamp
     record = await ingestion_service.ingest_and_publish(
-        source_type="facebook_page_comment",
+        source_type="facebook",
         source_id=comment_id,
         text_content=comment_message,
         raw_data=raw_data,
         created_at_source=created_at_source
+    )
+
+    # Broadcast new feedback event via WebSocket
+    await broadcast_new_feedback(
+        feedback_id=record.id,
+        source_type="facebook",
+        text_content=comment_message
     )
 
     logger.info(f"Created feedback record {record.id} for comment {comment_id}")
@@ -644,7 +668,7 @@ async def handle_edited_comment(
 
     # Find existing record
     stmt = select(FeedbackRecord).where(
-        FeedbackRecord.source_type == "facebook_page_comment",
+        FeedbackRecord.source_type == "facebook",
         FeedbackRecord.source_id == comment_id
     )
     result = await db.execute(stmt)
@@ -691,7 +715,7 @@ async def handle_removed_comment(
 
     # Find existing record
     stmt = select(FeedbackRecord).where(
-        FeedbackRecord.source_type == "facebook_page_comment",
+        FeedbackRecord.source_type == "facebook",
         FeedbackRecord.source_id == comment_id
     )
     result = await db.execute(stmt)

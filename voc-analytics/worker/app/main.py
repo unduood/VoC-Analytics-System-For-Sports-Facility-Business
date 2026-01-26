@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import get_db_session
 from app.models import FeedbackRecord, SentimentResult, IntentResult, AspectSentimentResult
 from app.nlp_service import get_nlp_service
+from app.services.redis_publisher import publish_analysis_completed, publish_analysis_failed
 
 # Configure logging
 logging.basicConfig(
@@ -60,6 +61,81 @@ def rating_to_sentiment(rating: int) -> str:
     else:
         logger.warning(f"Unexpected rating value: {rating}, defaulting to neutral")
         return "neutral"
+
+
+# =====================================================
+# VALUE NORMALIZATION FUNCTIONS
+# =====================================================
+# ML models return values in formats that don't match
+# the backend schema enums. These functions normalize them.
+
+SENTIMENT_MAPPING = {
+    "pos": "positive",
+    "neg": "negative",
+    "neu": "neutral",
+    "positive": "positive",
+    "negative": "negative",
+    "neutral": "neutral",
+}
+
+INTENT_MAPPING = {
+    "Feedback": "feedback",
+    "Question": "question",
+    "Complaint": "complaint",
+    "Off-topic": "off_topic",
+    "feedback": "feedback",
+    "question": "question",
+    "complaint": "complaint",
+    "off_topic": "off_topic",
+}
+
+ASPECT_MAPPING = {
+    "Equipment": "equipment",
+    "Staff": "staff",
+    "Cleanliness": "cleanliness",
+    "Atmosphere": "atmosphere",
+    "Price": "price",
+    "Location": "location",
+    "Programs": "programs",
+    "Program": "programs",
+    "Amenities": "amenities",
+    # Lowercase versions (already correct)
+    "equipment": "equipment",
+    "staff": "staff",
+    "cleanliness": "cleanliness",
+    "atmosphere": "atmosphere",
+    "price": "price",
+    "location": "location",
+    "programs": "programs",
+    "amenities": "amenities",
+}
+
+
+def normalize_sentiment(value: str) -> str:
+    """Normalize sentiment label to match backend enum"""
+    normalized = SENTIMENT_MAPPING.get(value, value.lower())
+    if normalized not in ["positive", "negative", "neutral"]:
+        logger.warning(f"Unknown sentiment value: {value}, defaulting to neutral")
+        return "neutral"
+    return normalized
+
+
+def normalize_intent(value: str) -> str:
+    """Normalize intent label to match backend enum"""
+    normalized = INTENT_MAPPING.get(value, value.lower().replace("-", "_"))
+    if normalized not in ["feedback", "question", "complaint", "off_topic"]:
+        logger.warning(f"Unknown intent value: {value}, defaulting to feedback")
+        return "feedback"
+    return normalized
+
+
+def normalize_aspect(value: str) -> str:
+    """Normalize aspect label to match backend enum"""
+    normalized = ASPECT_MAPPING.get(value, value.lower())
+    if normalized not in ["equipment", "staff", "cleanliness", "atmosphere", "price", "location", "programs", "amenities"]:
+        logger.warning(f"Unknown aspect value: {value}, skipping")
+        return None
+    return normalized
 
 
 async def process_feedback_analysis(record_id: UUID) -> bool:
@@ -131,15 +207,16 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             aspect_results_data = nlp_service.absa.analyze(feedback.text_content, include_none=True)
 
             # 5. Store sentiment result with correct source
+            normalized_sentiment = normalize_sentiment(sentiment_result_data['label'])
             sentiment_result = SentimentResult(
                 feedback_id=record_id,
-                sentiment=sentiment_result_data['label'],
+                sentiment=normalized_sentiment,
                 confidence=sentiment_result_data['confidence'],
                 source='rating' if use_rating_sentiment else 'model'  # ✅ Track source
             )
             db.add(sentiment_result)
             logger.info(
-                f"Sentiment: {sentiment_result_data['label']} "
+                f"Sentiment: {normalized_sentiment} "
                 f"({sentiment_result_data['confidence']:.2%}) "
                 f"[source: {'rating' if use_rating_sentiment else 'model'}]"
             )
@@ -147,48 +224,61 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             # 6. Store intent results (multi-label, can have multiple intents)
             # If no intents detected, store primary intent anyway
             if intent_result_data['labels']:
+                normalized_intents = []
                 for intent_label in intent_result_data['labels']:
+                    normalized_intent = normalize_intent(intent_label)
                     intent_result = IntentResult(
                         feedback_id=record_id,
-                        intent=intent_label,
+                        intent=normalized_intent,
                         confidence=intent_result_data['probabilities'][intent_label],
                         source='model'  # Mark as model prediction
                     )
                     db.add(intent_result)
-                logger.info(f"Intent: {intent_result_data['labels']}")
+                    normalized_intents.append(normalized_intent)
+                logger.info(f"Intent: {normalized_intents}")
             else:
                 # Store the highest probability intent even if below threshold
                 primary = max(intent_result_data['probabilities'], key=intent_result_data['probabilities'].get)
+                normalized_primary = normalize_intent(primary)
                 intent_result = IntentResult(
                     feedback_id=record_id,
-                    intent=primary,
+                    intent=normalized_primary,
                     confidence=intent_result_data['probabilities'][primary],
                     source='model'  # Mark as model prediction
                 )
                 db.add(intent_result)
-                logger.info(f"Intent (primary): {primary} ({intent_result_data['probabilities'][primary]:.2%})")
+                logger.info(f"Intent (primary): {normalized_primary} ({intent_result_data['probabilities'][primary]:.2%})")
 
             # 7. Store aspect sentiment results (Hybrid++: exclude 'none')
             stored_aspects = []
             for aspect in aspect_results_data:
                 if aspect['sentiment'] != 'none':  # Only store aspects with sentiment
+                    normalized_aspect_name = normalize_aspect(aspect['aspect'])
+                    if normalized_aspect_name is None:
+                        continue  # Skip unknown aspects
                     aspect_result = AspectSentimentResult(
                         feedback_id=record_id,
-                        aspect=aspect['aspect'],
-                        sentiment=aspect['sentiment'],
+                        aspect=normalized_aspect_name,
+                        sentiment=aspect['sentiment'],  # ABSA sentiment is already lowercase
                         confidence=aspect['confidence'],
                         source='model'  # Mark as model prediction
                     )
                     db.add(aspect_result)
-                    stored_aspects.append(aspect)
+                    # Store normalized version for summary
+                    stored_aspects.append({
+                        **aspect,
+                        'aspect': normalized_aspect_name
+                    })
 
             # Count aspects for logging
             logger.info(f"Aspects analyzed: {len(aspect_results_data)} total, {len(stored_aspects)} with sentiment stored (excluded {len(aspect_results_data) - len(stored_aspects)} with sentiment='none')")
 
             # 8. Build and store analysis summary (JSONB) - Hybrid++ approach
+            # Use normalized values for summary
+            summary_intents = normalized_intents if intent_result_data['labels'] else [normalized_primary]
             analysis_summary = {
                 "sentiment": {
-                    "label": sentiment_result_data['label'],
+                    "label": normalized_sentiment,
                     "confidence": float(sentiment_result_data['confidence']),
                     "probabilities": {k: float(v) for k, v in sentiment_result_data.get('probabilities', {}).items()},
                     "source": "rating" if use_rating_sentiment else "model",  # ✅ Track source
@@ -197,12 +287,16 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 },
                 "intents": [
                     {
-                        "label": label,
-                        "confidence": float(intent_result_data['probabilities'][label]),
+                        "label": intent_label,
+                        "confidence": float(intent_result_data['probabilities'].get(
+                            # Find original label for confidence lookup
+                            next((k for k, v in INTENT_MAPPING.items() if v == intent_label), intent_label),
+                            0.0
+                        )),
                         "source": "model",
                         "edited": False
                     }
-                    for label in (intent_result_data['labels'] if intent_result_data['labels'] else [primary])
+                    for intent_label in summary_intents
                 ],
                 "aspects": [
                     {
@@ -243,14 +337,30 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             await db.commit()
             logger.info(f"✅ Successfully processed feedback: {record_id}")
 
+            # 11. Broadcast analysis completed event via WebSocket
+            publish_analysis_completed(
+                feedback_id=record_id,
+                source_type=feedback.source_type,
+                analysis_summary=analysis_summary
+            )
+
             return True
 
     except Exception as e:
         logger.error(f"Error processing feedback {record_id}: {e}", exc_info=True)
 
         # Update status to 'failed'
+        source_type = "unknown"
         try:
             async with get_db_session() as db:
+                # Get source_type for broadcast
+                result = await db.execute(
+                    select(FeedbackRecord.source_type).where(FeedbackRecord.id == record_id)
+                )
+                row = result.scalar_one_or_none()
+                if row:
+                    source_type = row
+
                 await db.execute(
                     update(FeedbackRecord)
                     .where(FeedbackRecord.id == record_id)
@@ -259,6 +369,13 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 await db.commit()
         except Exception as db_error:
             logger.error(f"Failed to update status to 'failed': {db_error}")
+
+        # Broadcast analysis failed event via WebSocket
+        publish_analysis_failed(
+            feedback_id=record_id,
+            source_type=source_type,
+            error_message=str(e)
+        )
 
         return False
 

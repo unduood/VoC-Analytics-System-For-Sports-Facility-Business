@@ -44,6 +44,14 @@ class AspectSentiment(str, Enum):
     NONE = "none"
 
 
+# Analysis source enumeration
+class AnalysisSource(str, Enum):
+    """Source of analysis result"""
+    MODEL = "model"
+    USER = "user"
+    RATING = "rating"
+
+
 # Sentiment schemas
 class SentimentBase(BaseModel):
     """Base sentiment schema"""
@@ -64,10 +72,15 @@ class SentimentCreate(SentimentBase):
 
 
 class SentimentResponse(SentimentBase):
-    """Schema for sentiment response"""
+    """Schema for sentiment response with audit fields"""
     id: UUID
     feedback_id: UUID
+    source: str = Field(default="model", description="Source: model, user, or rating")
+    original_sentiment: Optional[str] = None
+    original_confidence: Optional[float] = None
+    is_deleted: bool = False
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -92,10 +105,15 @@ class IntentCreate(IntentBase):
 
 
 class IntentResponse(IntentBase):
-    """Schema for intent response"""
+    """Schema for intent response with audit fields"""
     id: UUID
     feedback_id: UUID
+    source: str = Field(default="model", description="Source: model or user")
+    original_intent: Optional[str] = None
+    original_confidence: Optional[float] = None
+    is_deleted: bool = False
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -121,10 +139,15 @@ class AspectSentimentCreate(AspectSentimentBase):
 
 
 class AspectSentimentResponse(AspectSentimentBase):
-    """Schema for aspect sentiment response"""
+    """Schema for aspect sentiment response with audit fields"""
     id: UUID
     feedback_id: UUID
+    source: str = Field(default="model", description="Source: model or user")
+    original_sentiment: Optional[str] = None
+    original_confidence: Optional[float] = None
+    is_deleted: bool = False
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

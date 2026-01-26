@@ -43,16 +43,12 @@ venv.bak/
 *.swp
 *.swo
 *~
-.DS_Store
+
+# Claude Code
+.claude/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-
-# PyCharm
-.idea/
-
-# VS Code
-.vscode/
 
 # Docker
 *.log
@@ -87,7 +83,6 @@ dmypy.json
 
 # Logs
 logs/
-*.log
 
 # Temporary files
 tmp/
@@ -95,17 +90,19 @@ temp/
 *.tmp
 
 # Test scripts and data (with secrets or personal testing)
-../test_webhook.ps1
-../test_*.ps1
-../test_payload.json
-../test_*.json
+test_webhook.ps1
+test_*.ps1
+test_payload.json
+test_*.json
 
 # Personal notebooks and scratch work
-../*.ipynb
-../thai_nlp_*.ipynb
+*.ipynb
 
 # Draft documentation (work-in-progress)
-../DATABASE_SCHEMA_IMPROVEMENT.md
-../ML_INTEGRATION_COMPLETE.md
-../*_DRAFT.md
-../*_WIP.md
+DATABASE_SCHEMA_IMPROVEMENT.md
+ML_INTEGRATION_COMPLETE.md
+*_DRAFT.md
+*_WIP.md
+
+# Windows artifacts
+nul

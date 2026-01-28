@@ -71,6 +71,12 @@ class SentimentResult(Base, UUIDMixin):
         comment="Original confidence before user edit"
     )
 
+    original_source: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Original source before user edit (model, rating)"
+    )
+
     # 6. Audit Timestamps
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -179,6 +185,12 @@ class IntentResult(Base, UUIDMixin):
         Float,
         nullable=True,
         comment="Original confidence before user edit"
+    )
+
+    original_source: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Original source before user edit (model)"
     )
 
     # 6. Audit Timestamps
@@ -295,6 +307,12 @@ class AspectSentimentResult(Base, UUIDMixin):
         Float,
         nullable=True,
         comment="Original confidence before user edit"
+    )
+
+    original_source: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Original source before user edit (model)"
     )
 
     # 6. Audit Timestamps

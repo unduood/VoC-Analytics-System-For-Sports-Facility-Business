@@ -65,7 +65,6 @@ export function FeedbackTable({ data, onRowClick }: FeedbackTableProps) {
                     <div className="flex flex-wrap gap-1 justify-center">
                       {feedback.intent_results
                         .filter((intent) => !intent.is_deleted)
-                        .slice(0, 2)
                         .map((intent, idx) => (
                           <Badge key={idx} variant="info" className="text-xs">
                             {getIntentLabel(intent.intent)}

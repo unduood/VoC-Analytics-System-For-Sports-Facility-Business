@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useFeedbackList } from '@/hooks/useFeedback';
+import { useQueryClient } from '@tanstack/react-query';
+import { useFeedbackList, feedbackKeys } from '@/hooks/useFeedback';
 import { FeedbackTable } from '@/components/records/FeedbackTable';
 import { FeedbackFilters } from '@/components/records/FeedbackFilters';
 import { FeedbackDetailModal } from '@/components/records/FeedbackDetailModal';
@@ -15,7 +16,8 @@ export default function RecordsPage() {
     page: 1,
     page_size: 20,
   });
-  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackWithAnalysis | null>(null);
+  const queryClient = useQueryClient();
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const { data, isLoading, error } = useFeedbackList(filters);
@@ -25,13 +27,15 @@ export default function RecordsPage() {
   };
 
   const handleRowClick = (feedback: FeedbackWithAnalysis) => {
-    setSelectedFeedback(feedback);
+    // Seed the detail cache with list data so the modal renders instantly
+    queryClient.setQueryData(feedbackKeys.detail(feedback.id), feedback);
+    setSelectedFeedbackId(feedback.id);
     setIsModalOpen(true);
   };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
-    setSelectedFeedback(null);
+    setSelectedFeedbackId(null);
   };
 
   if (error) {
@@ -49,8 +53,8 @@ export default function RecordsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">ข้อมูลข้อเสนอแนะ</h1>
-        <p className="text-gray-600 mt-2">ดูและค้นหาข้อเสนอแนะทั้งหมด</p>
+        <h1 className="text-3xl font-bold text-gray-900">ข้อมูลความคิดเห็น</h1>
+        <p className="text-gray-600 mt-2">ดูและค้นหาความคิดเห็นทั้งหมด</p>
       </div>
 
       {/* Filters */}
@@ -61,10 +65,12 @@ export default function RecordsPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>รายการข้อเสนอแนะ</CardTitle>
+              <CardTitle>รายการความคิดเห็น</CardTitle>
               {data && (
                 <p className="text-sm text-gray-500 mt-1">
-                  แสดง {((data.page - 1) * data.page_size) + 1} - {Math.min(data.page * data.page_size, data.total)} จากทั้งหมด {data.total} รายการ
+                  แสดง {(data.page - 1) * data.page_size + 1} -{" "}
+                  {Math.min(data.page * data.page_size, data.total)} จากทั้งหมด{" "}
+                  {data.total} รายการ
                 </p>
               )}
             </div>
@@ -102,7 +108,10 @@ export default function RecordsPage() {
               </div>
             </div>
           ) : (
-            <FeedbackTable data={data?.items || []} onRowClick={handleRowClick} />
+            <FeedbackTable
+              data={data?.items || []}
+              onRowClick={handleRowClick}
+            />
           )}
         </CardContent>
       </Card>
@@ -111,7 +120,9 @@ export default function RecordsPage() {
       {data && data.total > 0 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-gray-600">
-            แสดง {((data.page - 1) * data.page_size) + 1} - {Math.min(data.page * data.page_size, data.total)} จากทั้งหมด {data.total} รายการ
+            แสดง {(data.page - 1) * data.page_size + 1} -{" "}
+            {Math.min(data.page * data.page_size, data.total)} จากทั้งหมด{" "}
+            {data.total} รายการ
           </p>
           <div className="flex items-center space-x-2">
             <Button
@@ -141,7 +152,7 @@ export default function RecordsPage() {
 
       {/* Detail Modal */}
       <FeedbackDetailModal
-        feedback={selectedFeedback}
+        feedbackId={selectedFeedbackId}
         isOpen={isModalOpen}
         onClose={handleCloseModal}
       />

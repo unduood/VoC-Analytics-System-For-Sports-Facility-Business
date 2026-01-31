@@ -102,7 +102,7 @@ export function FeedbackFilters({ filters, onFiltersChange }: FeedbackFiltersPro
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="">ทั้งหมด</option>
-            <option value="email">อีเมล</option>
+            <option value="email">Email</option>
             <option value="instagram">Instagram</option>
             <option value="facebook">Facebook</option>
             <option value="google_maps">Google Maps</option>

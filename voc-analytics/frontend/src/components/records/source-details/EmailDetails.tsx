@@ -22,7 +22,7 @@ export function EmailDetails({ rawData }: EmailDetailsProps) {
   return (
     <DetailSection>
       <SectionTitle icon={<Mail className="w-4 h-4" />}>
-        รายละเอียดอีเมล
+        รายละเอียด Email
       </SectionTitle>
       <DataGrid>
         <DataField

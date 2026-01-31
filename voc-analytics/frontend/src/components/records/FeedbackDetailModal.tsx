@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
 import { format } from 'date-fns';
@@ -17,6 +18,7 @@ import {
   Tag,
   Info,
   Edit3,
+  Trash2,
 } from 'lucide-react';
 import type {
   SourceType,
@@ -28,8 +30,9 @@ import type {
 import { SourceDetails } from './source-details';
 import { AnalysisSourceLabel } from './AnalysisSourceLabel';
 import { AnalysisEditor } from './editors';
+import { getIntentColor } from '@/lib/utils';
 import { useAnalysisCorrection } from '@/hooks/useAnalysisCorrection';
-import { useFeedbackDetail } from '@/hooks/useFeedback';
+import { useFeedbackDetail, useDeleteFeedback } from '@/hooks/useFeedback';
 
 interface FeedbackDetailModalProps {
   feedbackId: string | null;
@@ -47,7 +50,7 @@ const sourceIcons: Record<SourceType, React.ReactNode> = {
 };
 
 const sourceLabels: Record<SourceType, string> = {
-  email: 'email',
+  email: 'Email',
   instagram: 'Instagram',
   facebook: 'Facebook',
   google_maps: 'Google Maps',
@@ -131,6 +134,49 @@ export function FeedbackDetailModal({ feedbackId, isOpen, onClose }: FeedbackDet
 
   // Initialize correction hook (always call hooks unconditionally)
   const correction = useAnalysisCorrection(feedbackId || '');
+
+  // Delete state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [passcode, setPasscode] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMutation = useDeleteFeedback();
+
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
+    setPasscode('');
+    setDeleteError(null);
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteConfirm(false);
+    setPasscode('');
+    setDeleteError(null);
+  };
+
+  const handleDeleteConfirm = () => {
+    const expectedPasscode = process.env.NEXT_PUBLIC_DELETE_PASSCODE;
+
+    if (!expectedPasscode) {
+      setDeleteError('ไม่ได้ตั้งค่ารหัสผ่านสำหรับลบข้อมูล');
+      return;
+    }
+
+    if (passcode !== expectedPasscode) {
+      setDeleteError('รหัสผ่านไม่ถูกต้อง');
+      return;
+    }
+
+    // Passcode verified, proceed with delete
+    deleteMutation.mutate(feedbackId!, {
+      onSuccess: () => {
+        setShowDeleteConfirm(false);
+        onClose();
+      },
+      onError: () => {
+        setDeleteError('เกิดข้อผิดพลาดในการลบข้อมูล');
+      },
+    });
+  };
 
   if (!feedback) return null;
 
@@ -279,7 +325,7 @@ export function FeedbackDetailModal({ feedbackId, isOpen, onClose }: FeedbackDet
                           className="flex items-center justify-between bg-gray-50 rounded-lg p-3"
                         >
                           <div className="flex items-center gap-3">
-                            <Badge variant="outline">
+                            <Badge className={getIntentColor(intent.intent)}>
                               {intentLabels[intent.intent]}
                             </Badge>
                             <span className="text-sm text-gray-500">
@@ -384,7 +430,7 @@ export function FeedbackDetailModal({ feedbackId, isOpen, onClose }: FeedbackDet
         {/* Metadata - only show when not editing */}
         {!correction.isEditing && (
           <div className="pt-4 border-t border-gray-200">
-            <div className="text-xs text-gray-500 mb-2 font-medium">ข้อมูลอ้างอิง</div>
+            <div className="text-xs text-gray-500 font-medium mb-2">ข้อมูลอ้างอิง</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div className="flex flex-col">
                 <span className="text-gray-400">ID ในระบบ</span>
@@ -405,6 +451,61 @@ export function FeedbackDetailModal({ feedbackId, isOpen, onClose }: FeedbackDet
               <div className="flex flex-col sm:col-span-2">
                 <span className="text-gray-400">อัปเดตล่าสุด</span>
                 <span className="text-gray-600">{formatDate(feedback.updated_at)}</span>
+              </div>
+            </div>
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={handleDeleteClick}
+                disabled={deleteMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                ลบข้อมูล
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Dialog */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">ยืนยันการลบข้อมูล</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                กรุณากรอกรหัสผ่านเพื่อยืนยันการลบความคิดเห็นนี้ การดำเนินการนี้ไม่สามารถย้อนกลับได้
+              </p>
+              <input
+                type="password"
+                value={passcode}
+                onChange={(e) => {
+                  setPasscode(e.target.value);
+                  setDeleteError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleDeleteConfirm();
+                }}
+                placeholder="รหัสผ่าน"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent mb-3"
+                autoFocus
+              />
+              {deleteError && (
+                <p className="text-sm text-red-600 mb-3">{deleteError}</p>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDeleteCancel}
+                  disabled={deleteMutation.isPending}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  disabled={deleteMutation.isPending || !passcode}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {deleteMutation.isPending ? 'กำลังลบ...' : 'ยืนยันลบ'}
+                </button>
               </div>
             </div>
           </div>

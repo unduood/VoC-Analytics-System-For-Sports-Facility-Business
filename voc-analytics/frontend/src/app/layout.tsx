@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VOC Analytics Dashboard",
-  description: "Voice of Customer Analytics - Sport Facility Feedback Analysis System",
+  title: "Gymini Fitness Club",
+  description: "Voice of Customer Analytics System",
 };
 
 export default function RootLayout({

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo } from 'react';
 import {
   ComposedChart,
   Area,
@@ -15,9 +15,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import { th } from 'date-fns/locale';
 import { useDashboardTrends } from '@/hooks/useDashboard';
-import { cn } from '@/lib/utils';
-
-type Period = '7d' | '30d' | '90d';
+import { useDashboardDate } from '@/context/DashboardDateContext';
 
 interface CustomTooltipProps {
   active?: boolean;
@@ -57,57 +55,91 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   );
 }
 
+// Granularity display labels
+const GRANULARITY_LABELS = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  quarterly: 'Quarterly',
+} as const;
+
 export function SentimentTrendChart() {
-  const [period, setPeriod] = useState<Period>('7d');
-  const { data: trendData, isLoading } = useDashboardTrends(period);
+  // Get dashboard date context
+  const { effectiveDates } = useDashboardDate();
 
-  const periodOptions: { value: Period; label: string }[] = [
-    { value: '7d', label: '7 Days' },
-    { value: '30d', label: '30 Days' },
-    { value: '90d', label: '90 Days' },
-  ];
+  // Fetch trend data using dashboard's date range
+  const { data: trendResponse, isLoading } = useDashboardTrends(
+    effectiveDates ? { start_date: effectiveDates.start_date, end_date: effectiveDates.end_date } : undefined
+  );
 
-  const formatXAxis = (dateStr: string) => {
-    try {
-      const date = parseISO(dateStr);
-      if (period === '7d') {
-        return format(date, 'd MMM', { locale: th });
-      } else if (period === '30d') {
-        return format(date, 'd MMM', { locale: th });
-      } else {
-        return format(date, 'MMM', { locale: th });
+  // Extract granularity and data from response
+  const granularity = trendResponse?.granularity ?? 'daily';
+  const trendData = trendResponse?.data ?? [];
+
+  // Determine X-axis format based on granularity
+  const formatXAxis = useMemo(() => {
+    return (dateStr: string) => {
+      try {
+        const date = parseISO(dateStr);
+        switch (granularity) {
+          case 'daily':
+            return format(date, 'd MMM', { locale: th });
+          case 'weekly':
+            return format(date, 'd MMM', { locale: th });
+          case 'monthly':
+            return format(date, 'MMM yy', { locale: th });
+          case 'quarterly':
+            // Show Q1, Q2, Q3, Q4 with year
+            const quarter = Math.ceil((date.getMonth() + 1) / 3);
+            return `Q${quarter} ${format(date, 'yy', { locale: th })}`;
+          default:
+            return format(date, 'd MMM', { locale: th });
+        }
+      } catch {
+        return dateStr;
       }
-    } catch {
-      return dateStr;
+    };
+  }, [granularity]);
+
+  // Reading guide text based on granularity
+  const readingGuide = useMemo(() => {
+    switch (granularity) {
+      case 'daily':
+        return 'Shaded areas = volume | Each point = daily count';
+      case 'weekly':
+        return 'Shaded areas = volume | Each point = weekly total';
+      case 'monthly':
+        return 'Shaded areas = volume | Each point = monthly total';
+      case 'quarterly':
+        return 'Shaded areas = volume | Each point = quarterly total';
+      default:
+        return 'Shaded areas = volume | Lines = count';
     }
-  };
+  }, [granularity]);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-semibold text-slate-900">
-          Sentiment Trend
-        </h3>
-        <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
-          {periodOptions.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => setPeriod(option.value)}
-              className={cn(
-                'px-3 py-1 text-sm font-medium rounded-md transition-colors',
-                period === option.value
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">
+            Sentiment Trend
+          </h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Track sentiment changes over time to spot patterns
+          </p>
+        </div>
+        <div className="px-3 py-1 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg">
+          {GRANULARITY_LABELS[granularity]}
         </div>
       </div>
 
+      {/* Reading guide */}
+      <div className="flex items-center gap-4 text-xs text-slate-400 mb-2">
+        <span>{readingGuide}</span>
+      </div>
+
       <div className="h-[280px]">
-        {isLoading || !trendData ? (
+        {isLoading || trendData.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="animate-pulse text-slate-400">Loading...</div>
           </div>

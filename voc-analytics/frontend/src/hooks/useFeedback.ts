@@ -5,7 +5,7 @@ import {
   submitManualFeedback,
   deleteFeedback,
 } from '@/lib/api';
-import type { FeedbackListParams } from '@/lib/types';
+import type { FeedbackListParams, DashboardDateParams } from '@/lib/types';
 
 // Query keys (shared across hooks)
 export const feedbackKeys = {
@@ -14,8 +14,8 @@ export const feedbackKeys = {
   list: (params: FeedbackListParams) => [...feedbackKeys.lists(), params] as const,
   details: () => [...feedbackKeys.all, 'detail'] as const,
   detail: (id: string) => [...feedbackKeys.details(), id] as const,
-  dashboard: () => [...feedbackKeys.all, 'dashboard'] as const,
-  trends: (period: string) => [...feedbackKeys.all, 'trends', period] as const,
+  dashboard: (params?: DashboardDateParams) => [...feedbackKeys.all, 'dashboard', params ?? {}] as const,
+  trends: (params?: { start_date?: string; end_date?: string }) => [...feedbackKeys.all, 'trends', params ?? {}] as const,
 };
 
 /**
@@ -52,10 +52,8 @@ export function useSubmitFeedback() {
       // Invalidate and refetch feedback lists, dashboard, and trends
       queryClient.invalidateQueries({ queryKey: feedbackKeys.lists() });
       queryClient.invalidateQueries({ queryKey: feedbackKeys.dashboard() });
-      // Invalidate all trend queries since new feedback affects statistics
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('7d') });
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('30d') });
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('90d') });
+      // Invalidate all trend queries (using prefix match)
+      queryClient.invalidateQueries({ queryKey: [...feedbackKeys.all, 'trends'] });
     },
   });
 }
@@ -72,10 +70,8 @@ export function useDeleteFeedback() {
       // Invalidate and refetch feedback lists, dashboard, and trends
       queryClient.invalidateQueries({ queryKey: feedbackKeys.lists() });
       queryClient.invalidateQueries({ queryKey: feedbackKeys.dashboard() });
-      // Invalidate all trend queries since deletion affects statistics
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('7d') });
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('30d') });
-      queryClient.invalidateQueries({ queryKey: feedbackKeys.trends('90d') });
+      // Invalidate all trend queries (using prefix match)
+      queryClient.invalidateQueries({ queryKey: [...feedbackKeys.all, 'trends'] });
     },
   });
 }

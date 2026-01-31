@@ -1,9 +1,9 @@
 """
 Analytics Service - Business logic for dashboard analytics
 """
-from datetime import datetime, timedelta
-from typing import List, Dict, Any
-from sqlalchemy import select, func, and_, case, cast, Integer, exists
+from datetime import datetime, timedelta, date
+from typing import List, Dict, Any, Optional
+from sqlalchemy import select, func, and_, case, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,57 +15,158 @@ class AnalyticsService:
     """Service for analytics and dashboard statistics"""
 
     @staticmethod
-    async def get_overview(db: AsyncSession) -> Dict[str, Any]:
+    def _build_date_filter(effective_date, start_date: Optional[date], end_date: Optional[date]):
+        """
+        Build date filter conditions for a given effective_date column.
+        Returns a list of filter conditions to be used with and_().
+        """
+        conditions = []
+        if start_date:
+            # Start of day for start_date
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            conditions.append(effective_date >= start_datetime)
+        if end_date:
+            # End of day for end_date (23:59:59.999999)
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            conditions.append(effective_date <= end_datetime)
+        return conditions
+
+    @staticmethod
+    async def get_overview(
+        db: AsyncSession,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> Dict[str, Any]:
         """
         Get dashboard overview statistics
+
+        Args:
+            db: Database session
+            start_date: Optional filter start date (inclusive)
+            end_date: Optional filter end date (inclusive)
+
         Returns: Dashboard overview data including totals, distributions, and summaries
         """
-        # Total feedbacks
+        # Current time for trend calculations
+        now = datetime.utcnow()
+
+        # Use effective date: created_at_source (original date) with fallback to created_at
+        effective_date = func.coalesce(FeedbackRecord.created_at_source, FeedbackRecord.created_at)
+        date_conditions = AnalyticsService._build_date_filter(effective_date, start_date, end_date)
+
+        # Total feedbacks (filtered by date)
         total_stmt = select(func.count(FeedbackRecord.id))
+        if date_conditions:
+            total_stmt = total_stmt.where(and_(*date_conditions))
         total_result = await db.execute(total_stmt)
         total_feedbacks = total_result.scalar() or 0
 
-        # Calculate trend percentage (compare current week vs previous week)
-        now = datetime.utcnow()
-        current_week_start = now - timedelta(days=7)
-        previous_week_start = now - timedelta(days=14)
+        # Calculate trend by comparing selected period vs previous equivalent period
+        # Example: If selected Jan 10-20 (11 days), compare with Dec 30 - Jan 9 (previous 11 days)
+        trend_percentage = None
+        trend_info = None
 
-        effective_date = func.coalesce(FeedbackRecord.created_at_source, FeedbackRecord.created_at)
+        if start_date and end_date:
+            # Calculate the span in days
+            span_days = (end_date - start_date).days + 1
 
-        # Current week count
-        current_week_stmt = select(func.count(FeedbackRecord.id)).where(
-            effective_date >= current_week_start
-        )
-        current_week_result = await db.execute(current_week_stmt)
-        current_week_count = current_week_result.scalar() or 0
+            # Calculate previous period (same length, immediately before selected period)
+            prev_end = start_date - timedelta(days=1)
+            prev_start = prev_end - timedelta(days=span_days - 1)
 
-        # Previous week count
-        previous_week_stmt = select(func.count(FeedbackRecord.id)).where(
-            and_(
-                effective_date >= previous_week_start,
-                effective_date < current_week_start
+            # Current period count (already calculated as total_feedbacks)
+            current_count = total_feedbacks
+
+            # Previous period count
+            prev_start_dt = datetime.combine(prev_start, datetime.min.time())
+            prev_end_dt = datetime.combine(prev_end, datetime.max.time())
+            prev_stmt = select(func.count(FeedbackRecord.id)).where(
+                and_(
+                    effective_date >= prev_start_dt,
+                    effective_date <= prev_end_dt
+                )
             )
-        )
-        previous_week_result = await db.execute(previous_week_stmt)
-        previous_week_count = previous_week_result.scalar() or 0
+            prev_result = await db.execute(prev_stmt)
+            previous_count = prev_result.scalar() or 0
 
-        # Calculate trend percentage
-        if previous_week_count > 0:
-            trend_percentage = round(((current_week_count - previous_week_count) / previous_week_count) * 100, 1)
-        elif current_week_count > 0:
-            trend_percentage = 100.0
+            # Calculate trend percentage
+            if previous_count > 0:
+                trend_percentage = round(((current_count - previous_count) / previous_count) * 100, 1)
+            elif current_count > 0:
+                trend_percentage = 100.0  # Infinite increase (from 0)
+            else:
+                trend_percentage = 0.0  # No data in either period
+
+            # Generate human-readable comparison label
+            comparison_label = AnalyticsService._get_comparison_label(span_days)
+
+            trend_info = {
+                'percentage': trend_percentage,
+                'current_count': current_count,
+                'previous_count': previous_count,
+                'comparison_label': comparison_label,
+                'span_days': span_days
+            }
         else:
-            trend_percentage = 0.0
+            # Default: compare last 7 days vs the 7 days before that
+            today = now.date()
+            current_end = today
+            current_start = today - timedelta(days=6)  # Last 7 days including today
+            prev_end = current_start - timedelta(days=1)
+            prev_start = prev_end - timedelta(days=6)  # Previous 7 days
 
-        # Sentiment distribution
+            # Current period count
+            current_start_dt = datetime.combine(current_start, datetime.min.time())
+            current_end_dt = datetime.combine(current_end, datetime.max.time())
+            current_stmt = select(func.count(FeedbackRecord.id)).where(
+                and_(
+                    effective_date >= current_start_dt,
+                    effective_date <= current_end_dt
+                )
+            )
+            current_result = await db.execute(current_stmt)
+            current_count = current_result.scalar() or 0
+
+            # Previous period count
+            prev_start_dt = datetime.combine(prev_start, datetime.min.time())
+            prev_end_dt = datetime.combine(prev_end, datetime.max.time())
+            prev_stmt = select(func.count(FeedbackRecord.id)).where(
+                and_(
+                    effective_date >= prev_start_dt,
+                    effective_date <= prev_end_dt
+                )
+            )
+            prev_result = await db.execute(prev_stmt)
+            previous_count = prev_result.scalar() or 0
+
+            # Calculate trend percentage
+            if previous_count > 0:
+                trend_percentage = round(((current_count - previous_count) / previous_count) * 100, 1)
+            elif current_count > 0:
+                trend_percentage = 100.0
+            else:
+                trend_percentage = 0.0
+
+            trend_info = {
+                'percentage': trend_percentage,
+                'current_count': current_count,
+                'previous_count': previous_count,
+                'comparison_label': 'vs previous 7 days',
+                'span_days': 7
+            }
+
+        # Sentiment distribution (joined with FeedbackRecord for date filtering)
         sentiment_stmt = (
             select(
                 SentimentResult.sentiment,
                 func.count(SentimentResult.id).label('count')
             )
+            .join(FeedbackRecord, SentimentResult.feedback_id == FeedbackRecord.id)
             .where(SentimentResult.is_deleted == False)
-            .group_by(SentimentResult.sentiment)
         )
+        if date_conditions:
+            sentiment_stmt = sentiment_stmt.where(and_(*date_conditions))
+        sentiment_stmt = sentiment_stmt.group_by(SentimentResult.sentiment)
         sentiment_result = await db.execute(sentiment_stmt)
         sentiment_rows = sentiment_result.all()
 
@@ -82,15 +183,18 @@ class AnalyticsService:
         total_with_sentiment = sum(sentiment_distribution.values())
         positive_rate = round((sentiment_distribution['positive'] / total_with_sentiment * 100), 1) if total_with_sentiment > 0 else 0.0
 
-        # Intent distribution
+        # Intent distribution (joined with FeedbackRecord for date filtering)
         intent_stmt = (
             select(
                 IntentResult.intent,
                 func.count(IntentResult.id).label('count')
             )
+            .join(FeedbackRecord, IntentResult.feedback_id == FeedbackRecord.id)
             .where(IntentResult.is_deleted == False)
-            .group_by(IntentResult.intent)
         )
+        if date_conditions:
+            intent_stmt = intent_stmt.where(and_(*date_conditions))
+        intent_stmt = intent_stmt.group_by(IntentResult.intent)
         intent_result = await db.execute(intent_stmt)
         intent_rows = intent_result.all()
 
@@ -107,14 +211,16 @@ class AnalyticsService:
         # Complaint count
         complaint_count = intent_distribution['complaint']
 
-        # Source distribution
+        # Source distribution (filtered by date)
         source_stmt = (
             select(
                 FeedbackRecord.source_type,
                 func.count(FeedbackRecord.id).label('count')
             )
-            .group_by(FeedbackRecord.source_type)
         )
+        if date_conditions:
+            source_stmt = source_stmt.where(and_(*date_conditions))
+        source_stmt = source_stmt.group_by(FeedbackRecord.source_type)
         source_result = await db.execute(source_stmt)
         source_rows = source_result.all()
 
@@ -130,7 +236,7 @@ class AnalyticsService:
             if row.source_type in source_distribution:
                 source_distribution[row.source_type] = row.count
 
-        # Aspect summary with satisfaction score (0-100 scale)
+        # Aspect summary with satisfaction score (0-100 scale) - joined with FeedbackRecord for date filtering
         aspect_stmt = (
             select(
                 AspectSentimentResult.aspect,
@@ -155,9 +261,12 @@ class AnalyticsService:
                 ).label('negative'),
                 func.avg(AspectSentimentResult.confidence).label('avg_confidence')
             )
+            .join(FeedbackRecord, AspectSentimentResult.feedback_id == FeedbackRecord.id)
             .where(AspectSentimentResult.is_deleted == False)
-            .group_by(AspectSentimentResult.aspect)
         )
+        if date_conditions:
+            aspect_stmt = aspect_stmt.where(and_(*date_conditions))
+        aspect_stmt = aspect_stmt.group_by(AspectSentimentResult.aspect)
         aspect_result = await db.execute(aspect_stmt)
         aspect_rows = aspect_result.all()
 
@@ -188,8 +297,13 @@ class AnalyticsService:
                 'satisfaction_score': satisfaction_score
             })
 
-        # Average confidence across all analyses
-        confidence_stmt = select(func.avg(SentimentResult.confidence))
+        # Average confidence across all analyses (filtered by date)
+        confidence_stmt = (
+            select(func.avg(SentimentResult.confidence))
+            .join(FeedbackRecord, SentimentResult.feedback_id == FeedbackRecord.id)
+        )
+        if date_conditions:
+            confidence_stmt = confidence_stmt.where(and_(*date_conditions))
         confidence_result = await db.execute(confidence_stmt)
         avg_confidence = confidence_result.scalar() or 0.0
 
@@ -199,16 +313,15 @@ class AnalyticsService:
         else:
             avg_satisfaction = 0.0
 
-        # Recent feedbacks (last 5) - ordered by effective date (created_at_source with fallback)
-        recent_stmt = (
-            select(FeedbackRecord)
-            .order_by(effective_date.desc())
-            .limit(5)
-        )
+        # Recent feedbacks (last 5) - ordered by effective date (filtered by date range)
+        recent_stmt = select(FeedbackRecord)
+        if date_conditions:
+            recent_stmt = recent_stmt.where(and_(*date_conditions))
+        recent_stmt = recent_stmt.order_by(effective_date.desc()).limit(5)
         recent_result = await db.execute(recent_stmt)
         recent_feedbacks = recent_result.scalars().all()
 
-        # Recent complaints (last 4) with negative aspects
+        # Recent complaints (last 4) with negative aspects (filtered by date range)
         complaint_exists = exists(
             select(IntentResult.id).where(
                 and_(
@@ -224,9 +337,10 @@ class AnalyticsService:
                 selectinload(FeedbackRecord.aspect_sentiment_results)
             )
             .where(complaint_exists)
-            .order_by(effective_date.desc())
-            .limit(4)
         )
+        if date_conditions:
+            recent_complaints_stmt = recent_complaints_stmt.where(and_(*date_conditions))
+        recent_complaints_stmt = recent_complaints_stmt.order_by(effective_date.desc()).limit(4)
         recent_complaints_result = await db.execute(recent_complaints_stmt)
         recent_complaints_records = recent_complaints_result.scalars().all()
 
@@ -248,6 +362,7 @@ class AnalyticsService:
         return {
             'total_feedbacks': total_feedbacks,
             'trend_percentage': trend_percentage,
+            'trend_info': trend_info,
             'positive_rate': positive_rate,
             'complaint_count': complaint_count,
             'avg_satisfaction': avg_satisfaction,
@@ -271,29 +386,152 @@ class AnalyticsService:
         }
 
     @staticmethod
-    async def get_trends(db: AsyncSession, period: str = '7d') -> List[Dict[str, Any]]:
+    def _determine_granularity(start_date: date, end_date: date) -> str:
         """
-        Get sentiment trends over time
+        Determine the appropriate granularity based on date span.
+        Supports ranges up to 2,000 days (~5.5 years).
+
+        - ≤ 60 days: daily (max 60 points)
+        - 61-180 days: weekly (max ~26 points)
+        - 181-730 days: monthly (max ~24 points)
+        - > 730 days: quarterly (max ~22 points for 5.5 years)
+        """
+        span_days = (end_date - start_date).days + 1
+        if span_days <= 60:
+            return 'daily'
+        elif span_days <= 180:
+            return 'weekly'
+        elif span_days <= 730:
+            return 'monthly'
+        else:
+            return 'quarterly'
+
+    @staticmethod
+    def _get_week_start(d: date) -> date:
+        """Get the Monday of the week for a given date (ISO week)."""
+        return d - timedelta(days=d.weekday())
+
+    @staticmethod
+    def _get_month_start(d: date) -> date:
+        """Get the first day of the month for a given date."""
+        return d.replace(day=1)
+
+    @staticmethod
+    def _get_quarter_start(d: date) -> date:
+        """Get the first day of the quarter for a given date."""
+        quarter_month = ((d.month - 1) // 3) * 3 + 1  # 1, 4, 7, or 10
+        return d.replace(month=quarter_month, day=1)
+
+    @staticmethod
+    def _get_comparison_label(span_days: int) -> str:
+        """
+        Generate a human-readable comparison label based on the period length.
+
+        Args:
+            span_days: Number of days in the period
+
+        Returns:
+            Human-readable label like "vs previous 7 days" or "vs previous month"
+        """
+        if span_days == 1:
+            return 'vs yesterday'
+        elif span_days == 7:
+            return 'vs previous week'
+        elif span_days <= 14:
+            return f'vs previous {span_days} days'
+        elif span_days <= 31:
+            # Check for approximate month (28-31 days)
+            if span_days >= 28:
+                return 'vs previous month'
+            # For 15-27 days, show in weeks if divisible, otherwise days
+            weeks = span_days // 7
+            if span_days % 7 == 0 and weeks > 1:
+                return f'vs previous {weeks} weeks'
+            return f'vs previous {span_days} days'
+        elif span_days <= 93:
+            # Check for approximate quarter (89-93 days)
+            if span_days >= 89:
+                return 'vs previous quarter'
+            # For 32-88 days, convert to months for readability
+            months = round(span_days / 30)
+            if months == 1:
+                return 'vs previous month'
+            return f'vs previous {months} months'
+        elif span_days <= 366:
+            # Check for approximate year (360-366 days)
+            if span_days >= 360:
+                return 'vs previous year'
+            # For 94-359 days, convert to months
+            months = round(span_days / 30)
+            if months == 1:
+                return 'vs previous month'
+            return f'vs previous {months} months'
+        else:
+            # For very long periods (> 1 year), show in years
+            years = span_days / 365
+            if years >= 1.9:
+                return f'vs previous {round(years)} years'
+            # Show in months for periods like 400-700 days
+            months = round(span_days / 30)
+            return f'vs previous {months} months'
+
+    @staticmethod
+    async def get_trends(
+        db: AsyncSession,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> Dict[str, Any]:
+        """
+        Get sentiment trends over time with automatic granularity.
+        Supports date ranges up to 2,000 days (~5.5 years).
+
+        Granularity is automatically determined based on date span:
+        - ≤ 60 days: daily (max 60 points)
+        - 61-180 days: weekly (max ~26 points)
+        - 181-730 days: monthly (max ~24 points)
+        - > 730 days: quarterly (max ~22 points)
 
         Args:
             db: Database session
-            period: Time period ('7d', '30d', '90d')
+            start_date: Optional filter start date (inclusive). Defaults to 90 days ago.
+            end_date: Optional filter end date (inclusive). Defaults to today.
 
-        Returns: List of trend data points
+        Returns: Dict with 'granularity' and 'data' (list of trend data points)
         """
-        # Calculate date range
-        days_map = {'7d': 7, '30d': 30, '90d': 90}
-        days = days_map.get(period, 7)
-        start_date = datetime.utcnow() - timedelta(days=days)
+        # Default to last 90 days if no dates provided
+        today = datetime.utcnow().date()
+        if end_date is None:
+            end_date = today
+        if start_date is None:
+            start_date = today - timedelta(days=89)  # 90 days including today
+
+        # Determine granularity based on span
+        granularity = AnalyticsService._determine_granularity(start_date, end_date)
 
         # Use effective date: created_at_source (original date from source) with fallback to created_at
-        # This ensures trends reflect when feedback was actually given, not when it was processed
         effective_date = func.coalesce(FeedbackRecord.created_at_source, FeedbackRecord.created_at)
 
-        # Query for trends grouped by date
+        # Build date filter conditions
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+
+        # Build the GROUP BY expression based on granularity
+        if granularity == 'daily':
+            group_expr = func.date(effective_date)
+        elif granularity == 'weekly':
+            # Group by ISO week start (Monday) - PostgreSQL specific
+            group_expr = func.date_trunc('week', effective_date)
+        elif granularity == 'monthly':
+            # Group by month start
+            group_expr = func.date_trunc('month', effective_date)
+        else:  # quarterly
+            # Group by quarter start - PostgreSQL specific
+            group_expr = func.date_trunc('quarter', effective_date)
+
+        # Query for trends grouped by the appropriate time unit
         stmt = (
             select(
-                func.date(effective_date).label('date'),
+                group_expr.label('period'),
                 func.count(FeedbackRecord.id).label('total'),
                 func.sum(
                     case(
@@ -317,44 +555,86 @@ class AnalyticsService:
             .outerjoin(SentimentResult, FeedbackRecord.id == SentimentResult.feedback_id)
             .where(
                 and_(
-                    effective_date >= start_date,
+                    effective_date >= start_datetime,
+                    effective_date <= end_datetime,
                     SentimentResult.is_deleted == False
                 )
             )
-            .group_by(func.date(effective_date))
-            .order_by(func.date(effective_date))
+            .group_by(group_expr)
+            .order_by(group_expr)
         )
 
         result = await db.execute(stmt)
         rows = result.all()
 
-        # Create complete date range (fill in missing dates with zeros)
+        # Create a dict for quick lookup (normalize keys to date)
+        data_dict = {}
+        for row in rows:
+            if row.period is not None:
+                # Handle both date and datetime returns from date_trunc
+                if isinstance(row.period, datetime):
+                    key = row.period.date()
+                else:
+                    key = row.period
+                data_dict[key] = row
+
+        # Generate complete list of periods and fill gaps with zeros
         trends = []
-        current_date = start_date.date()
-        end_date = datetime.utcnow().date()
 
-        # Create a dict for quick lookup
-        data_dict = {row.date: row for row in rows}
+        # Helper to safely extract values (handles None from SQL aggregates)
+        def make_trend_point(period_date: date, row) -> Dict[str, Any]:
+            return {
+                'date': period_date.isoformat(),
+                'total': (row.total or 0) if row else 0,
+                'positive': (row.positive or 0) if row else 0,
+                'neutral': (row.neutral or 0) if row else 0,
+                'negative': (row.negative or 0) if row else 0
+            }
 
-        while current_date <= end_date:
-            row = data_dict.get(current_date)
-            if row:
-                trends.append({
-                    'date': current_date.isoformat(),
-                    'total': row.total or 0,
-                    'positive': row.positive or 0,
-                    'neutral': row.neutral or 0,
-                    'negative': row.negative or 0
-                })
-            else:
-                # Fill missing dates with zeros
-                trends.append({
-                    'date': current_date.isoformat(),
-                    'total': 0,
-                    'positive': 0,
-                    'neutral': 0,
-                    'negative': 0
-                })
-            current_date += timedelta(days=1)
+        if granularity == 'daily':
+            current = start_date
+            while current <= end_date:
+                row = data_dict.get(current)
+                trends.append(make_trend_point(current, row))
+                current += timedelta(days=1)
 
-        return trends
+        elif granularity == 'weekly':
+            # Start from the Monday of the start_date's week
+            current = AnalyticsService._get_week_start(start_date)
+            end_week = AnalyticsService._get_week_start(end_date)
+            while current <= end_week:
+                row = data_dict.get(current)
+                trends.append(make_trend_point(current, row))
+                current += timedelta(weeks=1)
+
+        elif granularity == 'monthly':
+            # Start from the first day of start_date's month
+            current = AnalyticsService._get_month_start(start_date)
+            end_month = AnalyticsService._get_month_start(end_date)
+            while current <= end_month:
+                row = data_dict.get(current)
+                trends.append(make_trend_point(current, row))
+                # Move to next month
+                if current.month == 12:
+                    current = current.replace(year=current.year + 1, month=1)
+                else:
+                    current = current.replace(month=current.month + 1)
+
+        else:  # quarterly
+            # Start from the first day of start_date's quarter
+            current = AnalyticsService._get_quarter_start(start_date)
+            end_quarter = AnalyticsService._get_quarter_start(end_date)
+            while current <= end_quarter:
+                row = data_dict.get(current)
+                trends.append(make_trend_point(current, row))
+                # Move to next quarter (add 3 months)
+                new_month = current.month + 3
+                if new_month > 12:
+                    current = current.replace(year=current.year + 1, month=new_month - 12)
+                else:
+                    current = current.replace(month=new_month)
+
+        return {
+            'granularity': granularity,
+            'data': trends
+        }

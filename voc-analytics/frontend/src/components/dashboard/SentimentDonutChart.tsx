@@ -76,13 +76,23 @@ export function SentimentDonutChart({ data }: SentimentDonutChartProps) {
     );
   }
 
+  // Calculate dominant sentiment for insight
+  const dominantSentiment = chartData.reduce((prev, current) =>
+    (prev.value > current.value) ? prev : current
+  );
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <h3 className="text-base font-semibold text-slate-900 mb-4">
-        Sentiment Distribution
-      </h3>
+      <div className="mb-3">
+        <h3 className="text-base font-semibold text-slate-900">
+          Sentiment Distribution
+        </h3>
+        <p className="text-xs text-slate-500 mt-1">
+          AI-analyzed emotional tone of all feedback
+        </p>
+      </div>
 
-      <div className="h-[220px]">
+      <div className="h-[200px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -124,6 +134,14 @@ export function SentimentDonutChart({ data }: SentimentDonutChartProps) {
           </div>
         ))}
       </div>
+
+      {/* Insight text */}
+      <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-100 text-center">
+        <span className="font-medium" style={{ color: COLORS[dominantSentiment.name as keyof typeof COLORS] }}>
+          {dominantSentiment.percentage}% {getSentimentLabel(dominantSentiment.name)}
+        </span>
+        {' '}is the dominant sentiment
+      </p>
     </div>
   );
 }

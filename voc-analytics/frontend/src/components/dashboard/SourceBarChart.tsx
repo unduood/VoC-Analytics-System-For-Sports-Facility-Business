@@ -71,41 +71,61 @@ export function SourceBarChart({ data }: SourceBarChartProps) {
 
   const hasData = chartData.some((item) => item.count > 0);
 
+  // Find top source
+  const topSource = chartData.reduce((prev, current) =>
+    (current.count > prev.count) ? current : prev
+  );
+  const totalFeedback = chartData.reduce((sum, item) => sum + item.count, 0);
+  const activeChannels = chartData.filter(item => item.count > 0).length;
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <h3 className="text-base font-semibold text-slate-900 mb-4">
-        Feedback by Source
-      </h3>
+      <div className="mb-3">
+        <h3 className="text-base font-semibold text-slate-900">
+          Feedback by Source
+        </h3>
+        <p className="text-xs text-slate-500 mt-1">
+          {activeChannels} of 6 channels active
+        </p>
+      </div>
 
       {hasData ? (
-        <div className="h-[280px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fill: '#64748b', fontSize: 10 }}
-                tickLine={false}
-                axisLine={{ stroke: '#e2e8f0' }}
-                angle={-35}
-                textAnchor="end"
-                height={60}
-              />
-              <YAxis
-                tick={{ fill: '#64748b', fontSize: 12 }}
-                tickLine={false}
-                axisLine={false}
-                width={35}
-              />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.05)' }} />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={SOURCE_COLORS[entry.source]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <>
+          <div className="h-[250px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: '#64748b', fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  angle={-35}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  tick={{ fill: '#64748b', fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={35}
+                />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.05)' }} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={SOURCE_COLORS[entry.source]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Top source insight */}
+          <p className="text-xs text-slate-500 mt-2 pt-2 border-t border-slate-100">
+            Top source: <span className="font-medium text-slate-700">{topSource.name}</span>
+            {' '}({Math.round((topSource.count / totalFeedback) * 100)}%)
+          </p>
+        </>
       ) : (
         <div className="flex items-center justify-center h-[280px] text-slate-400">
           No data available

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import {
   LineChart,
@@ -15,23 +15,49 @@ import {
 import { format } from 'date-fns';
 import { th } from 'date-fns/locale';
 import { useDashboardTrends } from '@/hooks/useDashboard';
+import { useDashboardDate } from '@/context/DashboardDateContext';
+
+// Granularity display labels (Thai)
+const GRANULARITY_LABELS = {
+  daily: 'รายวัน',
+  weekly: 'รายสัปดาห์',
+  monthly: 'รายเดือน',
+  quarterly: 'รายไตรมาส',
+} as const;
 
 export function TrendLineChart() {
-  const [period, setPeriod] = useState<'7d' | '30d' | '90d'>('7d');
-  const { data: trendData, isLoading } = useDashboardTrends(period);
+  // Get dashboard date context
+  const { effectiveDates } = useDashboardDate();
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    if (period === '7d') {
-      return format(date, 'EEE', { locale: th });
-    } else if (period === '30d') {
-      return format(date, 'dd MMM', { locale: th });
-    } else {
-      return format(date, 'dd/MM', { locale: th });
-    }
-  };
+  // Fetch trend data using dashboard's date range
+  const { data: trendResponse, isLoading } = useDashboardTrends(
+    effectiveDates ? { start_date: effectiveDates.start_date, end_date: effectiveDates.end_date } : undefined
+  );
 
-  const chartData = (trendData || []).map((item) => ({
+  // Extract granularity and data from response
+  const granularity = trendResponse?.granularity ?? 'daily';
+  const trendData = trendResponse?.data ?? [];
+
+  const formatDate = useMemo(() => {
+    return (dateStr: string) => {
+      const date = new Date(dateStr);
+      switch (granularity) {
+        case 'daily':
+          return format(date, 'EEE d', { locale: th });
+        case 'weekly':
+          return format(date, 'd MMM', { locale: th });
+        case 'monthly':
+          return format(date, 'MMM yy', { locale: th });
+        case 'quarterly':
+          const quarter = Math.ceil((date.getMonth() + 1) / 3);
+          return `Q${quarter} ${format(date, 'yy', { locale: th })}`;
+        default:
+          return format(date, 'dd/MM', { locale: th });
+      }
+    };
+  }, [granularity]);
+
+  const chartData = trendData.map((item) => ({
     ...item,
     dateFormatted: formatDate(item.date),
   }));
@@ -41,15 +67,9 @@ export function TrendLineChart() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Sentiment Trends</CardTitle>
-          <select
-            value={period}
-            onChange={(e) => setPeriod(e.target.value as '7d' | '30d' | '90d')}
-            className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="7d">7 วัน</option>
-            <option value="30d">30 วัน</option>
-            <option value="90d">90 วัน</option>
-          </select>
+          <span className="px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg">
+            {GRANULARITY_LABELS[granularity]}
+          </span>
         </div>
       </CardHeader>
       <CardContent>

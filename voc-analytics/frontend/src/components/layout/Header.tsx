@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
+import Image from 'next/image';
 import { formatRelativeTime } from '@/lib/utils';
 import { useRealtime } from '@/hooks/useRealtime';
 import { useApiHealth } from '@/hooks/useApiHealth';
@@ -28,17 +29,21 @@ export function Header() {
   return (
     <header className="bg-white border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between py-6">
+        <div className="flex items-center justify-between py-4">
           <div className="flex items-center space-x-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-blue-600 rounded-lg">
-              <Activity className="w-7 h-7 text-white" />
-            </div>
+            <Image
+              src="/logo.svg"
+              alt="Logo"
+              width={72}
+              height={72}
+              className="rounded-xl"
+            />
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
-                Voice of Customer Analytics
+                Gymini Fitness Club
               </h1>
               <p className="text-sm text-gray-500">
-                Sport Facility Feedback Analysis System
+                Voice of Customer Analytics System
               </p>
             </div>
           </div>
@@ -50,7 +55,8 @@ export function Header() {
                 <div className="w-2 h-2 rounded-full bg-green-500" />
                 <span>ออนไลน์</span>
               </div>
-            ) : connectionStatus === 'connecting' || apiStatus === 'checking' ? (
+            ) : connectionStatus === "connecting" ||
+              apiStatus === "checking" ? (
               <div className="flex items-center space-x-1.5 text-yellow-600">
                 <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
                 <span>กำลังเชื่อมต่อ</span>

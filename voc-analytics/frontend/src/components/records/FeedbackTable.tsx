@@ -4,6 +4,7 @@ import {
   getSentimentColor,
   getSentimentLabel,
   getIntentLabel,
+  getIntentColor,
   getSourceLabel,
   getSourceBadgeColor,
   getStatusColor,
@@ -65,9 +66,8 @@ export function FeedbackTable({ data, onRowClick }: FeedbackTableProps) {
                     <div className="flex flex-wrap gap-1 justify-center">
                       {feedback.intent_results
                         .filter((intent) => !intent.is_deleted)
-                        .slice(0, 2)
                         .map((intent, idx) => (
-                          <Badge key={idx} variant="info" className="text-xs">
+                          <Badge key={idx} className={`text-xs ${getIntentColor(intent.intent)}`}>
                             {getIntentLabel(intent.intent)}
                           </Badge>
                         ))}
@@ -97,7 +97,7 @@ export function FeedbackTable({ data, onRowClick }: FeedbackTableProps) {
                     <span className="text-gray-400">-</span>
                   )}
                 </td>
-                <td className="py-3 px-4 text-center">
+                <td className="py-3 px-4 text-center whitespace-nowrap">
                   <Badge className={getStatusColor(feedback.processing_status)}>
                     {getStatusLabel(feedback.processing_status)}
                   </Badge>

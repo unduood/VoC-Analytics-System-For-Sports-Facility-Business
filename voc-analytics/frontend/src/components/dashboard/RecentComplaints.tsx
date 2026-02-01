@@ -38,18 +38,34 @@ function SourceIcon({ source, className }: { source: SourceType; className?: str
 }
 
 function ComplaintCard({ complaint }: { complaint: RecentComplaint }) {
+  // Determine severity based on number of negative aspects
+  const severity = complaint.negative_aspects.length >= 3 ? 'high' :
+                   complaint.negative_aspects.length >= 2 ? 'medium' : 'low';
+
   return (
-    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 hover:border-slate-300 transition-colors">
-      {/* Header with source badge */}
+    <div className={cn(
+      'rounded-lg p-4 border transition-colors',
+      severity === 'high' ? 'bg-red-50 border-red-200 hover:border-red-300' :
+      severity === 'medium' ? 'bg-amber-50 border-amber-200 hover:border-amber-300' :
+      'bg-slate-50 border-slate-200 hover:border-slate-300'
+    )}>
+      {/* Header with source badge and severity */}
       <div className="flex items-center justify-between mb-2">
-        <div
-          className={cn(
-            'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border',
-            getSourceBadgeColor(complaint.source_type)
+        <div className="flex items-center gap-2">
+          <div
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border',
+              getSourceBadgeColor(complaint.source_type)
+            )}
+          >
+            <SourceIcon source={complaint.source_type} className="w-3.5 h-3.5 shrink-0" />
+            <span>{getSourceLabel(complaint.source_type)}</span>
+          </div>
+          {severity === 'high' && (
+            <span className="text-[10px] font-medium text-red-600 bg-red-100 px-1.5 py-0.5 rounded">
+              Urgent
+            </span>
           )}
-        >
-          <SourceIcon source={complaint.source_type} className="w-3.5 h-3.5 shrink-0" />
-          <span>{getSourceLabel(complaint.source_type)}</span>
         </div>
         {complaint.created_at && (
           <span className="text-xs text-slate-400">
@@ -97,17 +113,41 @@ export function RecentComplaints({ data }: RecentComplaintsProps) {
     );
   }
 
+  // Analyze aspects for summary
+  const aspectCounts: Record<string, number> = {};
+  data.forEach(complaint => {
+    complaint.negative_aspects.forEach(aspect => {
+      aspectCounts[aspect] = (aspectCounts[aspect] || 0) + 1;
+    });
+  });
+  const topAspect = Object.entries(aspectCounts).sort((a, b) => b[1] - a[1])[0];
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-2">
         <AlertTriangle className="w-5 h-5 text-amber-500" />
-        <h3 className="text-base font-semibold text-slate-900">
-          Recent Complaints
-        </h3>
-        <span className="ml-auto text-xs text-slate-400">
+        <div className="flex-1">
+          <h3 className="text-base font-semibold text-slate-900">
+            Recent Complaints
+          </h3>
+          <p className="text-xs text-slate-500">
+            Latest negative feedback requiring attention
+          </p>
+        </div>
+        <span className="text-xs text-slate-400">
           {data.length} items
         </span>
       </div>
+
+      {/* Quick insight bar */}
+      {topAspect && (
+        <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-3">
+          <p className="text-xs text-amber-800">
+            Most mentioned issue: <span className="font-medium">{getAspectLabel(topAspect[0])}</span>
+            {' '}({topAspect[1]} mentions)
+          </p>
+        </div>
+      )}
 
       {/* 2-column grid for complaint cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

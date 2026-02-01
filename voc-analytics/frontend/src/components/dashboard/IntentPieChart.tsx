@@ -82,20 +82,28 @@ export function IntentPieChart({ data }: IntentPieChartProps) {
     );
   }
 
+  // Find complaint data for insight display
+  const complaintData = chartData.find(item => item.name === 'complaint');
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <h3 className="text-base font-semibold text-slate-900 mb-4">
-        Intent Classification
-      </h3>
+      <div className="mb-3">
+        <h3 className="text-base font-semibold text-slate-900">
+          Intent Classification
+        </h3>
+        <p className="text-xs text-slate-500 mt-1">
+          Why customers are reaching out
+        </p>
+      </div>
 
-      <div className="h-[200px]">
+      <div className="h-[180px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={chartData}
               cx="50%"
               cy="50%"
-              innerRadius={0}
+              innerRadius={45}
               outerRadius={75}
               paddingAngle={2}
               dataKey="value"
@@ -121,15 +129,24 @@ export function IntentPieChart({ data }: IntentPieChartProps) {
               className="w-3 h-3 rounded-full flex-shrink-0"
               style={{ backgroundColor: COLORS[item.name as keyof typeof COLORS] }}
             />
-            <span className="text-xs text-slate-600 truncate">
-              {getIntentLabel(item.name)}{' '}
-              <span className="font-medium text-slate-900">
-                {item.value}
+            <div className="flex-1 min-w-0">
+              <span className="text-xs text-slate-600 truncate block">
+                {getIntentLabel(item.name)}
               </span>
-            </span>
+              <span className="text-xs font-medium text-slate-900">
+                {item.value} <span className="text-slate-400">({item.percentage}%)</span>
+              </span>
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Intent explanation */}
+      {complaintData && complaintData.value > 0 && (
+        <p className="text-xs text-red-600 mt-3 pt-2 border-t border-slate-100">
+          {complaintData.percentage}% are complaints requiring action
+        </p>
+      )}
     </div>
   );
 }

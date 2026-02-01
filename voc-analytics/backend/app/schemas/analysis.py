@@ -78,6 +78,7 @@ class SentimentResponse(SentimentBase):
     source: str = Field(default="model", description="Source: model, user, or rating")
     original_sentiment: Optional[str] = None
     original_confidence: Optional[float] = None
+    original_source: Optional[str] = Field(None, description="Original source before user edit")
     is_deleted: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -111,6 +112,7 @@ class IntentResponse(IntentBase):
     source: str = Field(default="model", description="Source: model or user")
     original_intent: Optional[str] = None
     original_confidence: Optional[float] = None
+    original_source: Optional[str] = Field(None, description="Original source before user edit")
     is_deleted: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -145,6 +147,7 @@ class AspectSentimentResponse(AspectSentimentBase):
     source: str = Field(default="model", description="Source: model or user")
     original_sentiment: Optional[str] = None
     original_confidence: Optional[float] = None
+    original_source: Optional[str] = Field(None, description="Original source before user edit")
     is_deleted: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None

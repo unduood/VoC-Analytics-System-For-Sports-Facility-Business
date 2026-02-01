@@ -39,10 +39,10 @@ const sourceConfig: Record<
     borderClass: 'border-purple-200',
   },
   rating: {
-    label: 'แปลงจากคะแนนดาว',
+    label: 'แปลงจากคะแนนรีวิว',
     shortLabel: 'จากคะแนน',
-    description: 'แปลงจากคะแนนดาวที่ผู้ใช้ให้',
-    tooltipText: 'ผลลัพธ์นี้แปลงมาจากคะแนนดาว (1-2 ดาว = เชิงลบ, 3 ดาว = เป็นกลาง, 4-5 ดาว = เชิงบวก)',
+    description: 'แปลงจากคะแนนรีวิวที่ผู้ใช้ให้',
+    tooltipText: 'ผลลัพธ์นี้แปลงมาจากคะแนนรีวิว (1-2 = เชิงลบ, 3 = เป็นกลาง, 4-5 = เชิงบวก)',
     icon: Star,
     colorClass: 'text-amber-700',
     bgClass: 'bg-amber-50',

@@ -17,6 +17,18 @@ interface AspectStackedBarChartProps {
   data: AspectSummary[];
 }
 
+// All 8 aspects in display order
+const ALL_ASPECTS = [
+  'equipment',
+  'staff',
+  'cleanliness',
+  'atmosphere',
+  'price',
+  'location',
+  'programs',
+  'amenities',
+] as const;
+
 const COLORS = {
   positive: '#10b981', // emerald-500
   neutral: '#f59e0b',  // amber-500
@@ -61,40 +73,70 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 export function AspectStackedBarChart({ data }: AspectStackedBarChartProps) {
-  // Sort by total mentions (most to least)
-  const sortedData = [...data]
-    .sort((a, b) => b.total_mentions - a.total_mentions)
-    .map((item) => ({
-      aspect: item.aspect,
-      positive: item.positive,
-      neutral: item.neutral,
-      negative: item.negative,
-      total: item.total_mentions,
-    }));
+  // Create chart data for all 8 aspects, filling missing ones with zeros
+  // Aspects with data are sorted by total (descending), aspects without data come last
+  const chartData = ALL_ASPECTS.map((aspect) => {
+    const aspectData = data.find((d) => d.aspect === aspect);
+    return {
+      aspect,
+      positive: aspectData?.positive ?? 0,
+      neutral: aspectData?.neutral ?? 0,
+      negative: aspectData?.negative ?? 0,
+      total: aspectData?.total_mentions ?? 0,
+      hasData: !!aspectData,
+    };
+  }).sort((a, b) => {
+    // Sort: aspects with data first (by total descending), then aspects without data
+    if (a.hasData && !b.hasData) return -1;
+    if (!a.hasData && b.hasData) return 1;
+    return b.total - a.total;
+  });
 
-  if (sortedData.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-        <h3 className="text-base font-semibold text-slate-900 mb-4">
-          Aspect-Based Sentiment
-        </h3>
-        <div className="flex items-center justify-center h-[300px] text-slate-400">
-          No data available
-        </div>
-      </div>
-    );
-  }
+  // Check if there's any data at all
+  const hasAnyData = chartData.some((item) => item.hasData);
+
+  // Find aspect with most negative feedback (only from aspects with actual data)
+  const aspectsWithData = chartData.filter((item) => item.hasData);
+  const mostNegativeAspect = aspectsWithData.length > 0
+    ? aspectsWithData.reduce((prev, current) =>
+        (current.negative > prev.negative) ? current : prev
+      )
+    : null;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm h-full">
-      <h3 className="text-base font-semibold text-slate-900 mb-4">
-        Aspect-Based Sentiment
-      </h3>
+      <div className="mb-3">
+        <h3 className="text-base font-semibold text-slate-900">
+          Aspect-Based Sentiment
+        </h3>
+        <p className="text-xs text-slate-500 mt-1">
+          What customers mention most, broken down by sentiment
+        </p>
+      </div>
 
-      <div className="h-[320px]">
+      {/* Insight callout - only show if there's data and negative mentions */}
+      {mostNegativeAspect && mostNegativeAspect.negative > 0 && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3">
+          <p className="text-xs text-red-700">
+            <span className="font-medium">{getAspectLabel(mostNegativeAspect.aspect)}</span>
+            {' '}has the most negative mentions ({mostNegativeAspect.negative})
+          </p>
+        </div>
+      )}
+
+      {/* No data message - shown when no aspects have data */}
+      {!hasAnyData && (
+        <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 mb-3">
+          <p className="text-xs text-slate-500">
+            No aspect data available for the selected period
+          </p>
+        </div>
+      )}
+
+      <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
-            data={sortedData}
+            data={chartData}
             layout="vertical"
             margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
           >

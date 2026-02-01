@@ -42,6 +42,31 @@ class FacebookWebhookPayload(BaseModel):
     entry: List[FacebookWebhookEntry] = Field(..., description="Array of entries")
 
 
+class GoogleFormWebhookPayload(BaseModel):
+    """Schema for Google Form survey response webhook payload"""
+    # Demographics
+    gender: str = Field(..., description="Respondent gender (e.g., 'ชาย', 'หญิง')")
+    age_group: str = Field(..., description="Age group (e.g., '20 - 29 ปี')")
+    timestamp: datetime = Field(..., description="Form submission timestamp")
+    membership_type: str = Field(..., description="Membership type (e.g., 'Gymini Pro Max')")
+    visit_frequency: str = Field(..., description="Visit frequency (e.g., '1-2 วัน/สัปดาห์')")
+    preferred_period: str = Field(..., description="Preferred time period (e.g., 'เย็น (17:00-20:00)')")
+
+    # Optional text
+    additional_suggestions: Optional[str] = Field(None, description="Optional free text suggestions")
+
+    # Ratings (1-5 scale)
+    overall_rating: int = Field(..., ge=1, le=5, description="Overall satisfaction rating")
+    equipment_rating: int = Field(..., ge=1, le=5, description="Equipment rating")
+    staff_rating: int = Field(..., ge=1, le=5, description="Staff rating")
+    cleanliness_rating: int = Field(..., ge=1, le=5, description="Cleanliness rating")
+    atmosphere_rating: int = Field(..., ge=1, le=5, description="Atmosphere rating")
+    price_rating: int = Field(..., ge=1, le=5, description="Price rating")
+    location_rating: int = Field(..., ge=1, le=5, description="Location rating")
+    program_rating: int = Field(..., ge=1, le=5, description="Programs/classes rating")
+    amenities_rating: int = Field(..., ge=1, le=5, description="Amenities rating")
+
+
 class WebhookResponse(BaseModel):
     """Standard response for webhook endpoints"""
     status: str = Field(..., description="Response status")

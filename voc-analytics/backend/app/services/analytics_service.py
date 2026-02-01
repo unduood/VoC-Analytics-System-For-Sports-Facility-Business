@@ -1,14 +1,18 @@
 """
 Analytics Service - Business logic for dashboard analytics
 """
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
+from zoneinfo import ZoneInfo
 from sqlalchemy import select, func, and_, case, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.feedback import FeedbackRecord
 from app.models.analysis import SentimentResult, IntentResult, AspectSentimentResult
+
+# Application timezone (Thai users)
+APP_TIMEZONE = ZoneInfo("Asia/Bangkok")
 
 
 class AnalyticsService:
@@ -19,16 +23,22 @@ class AnalyticsService:
         """
         Build date filter conditions for a given effective_date column.
         Returns a list of filter conditions to be used with and_().
+
+        Dates are interpreted as Bangkok timezone (Asia/Bangkok) since this is
+        a Thai application. The resulting datetime is converted to UTC for
+        comparison with timezone-aware database timestamps.
         """
         conditions = []
         if start_date:
-            # Start of day for start_date
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            conditions.append(effective_date >= start_datetime)
+            # Start of day in Bangkok timezone, then convert to UTC
+            start_datetime_local = datetime.combine(start_date, time.min, tzinfo=APP_TIMEZONE)
+            start_datetime_utc = start_datetime_local.astimezone(ZoneInfo("UTC"))
+            conditions.append(effective_date >= start_datetime_utc)
         if end_date:
-            # End of day for end_date (23:59:59.999999)
-            end_datetime = datetime.combine(end_date, datetime.max.time())
-            conditions.append(effective_date <= end_datetime)
+            # End of day in Bangkok timezone (23:59:59.999999), then convert to UTC
+            end_datetime_local = datetime.combine(end_date, time.max, tzinfo=APP_TIMEZONE)
+            end_datetime_utc = end_datetime_local.astimezone(ZoneInfo("UTC"))
+            conditions.append(effective_date <= end_datetime_utc)
         return conditions
 
     @staticmethod
@@ -78,8 +88,8 @@ class AnalyticsService:
             current_count = total_feedbacks
 
             # Previous period count
-            prev_start_dt = datetime.combine(prev_start, datetime.min.time())
-            prev_end_dt = datetime.combine(prev_end, datetime.max.time())
+            prev_start_dt = datetime.combine(prev_start, time.min, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
+            prev_end_dt = datetime.combine(prev_end, time.max, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
             prev_stmt = select(func.count(FeedbackRecord.id)).where(
                 and_(
                     effective_date >= prev_start_dt,
@@ -116,8 +126,8 @@ class AnalyticsService:
             prev_start = prev_end - timedelta(days=6)  # Previous 7 days
 
             # Current period count
-            current_start_dt = datetime.combine(current_start, datetime.min.time())
-            current_end_dt = datetime.combine(current_end, datetime.max.time())
+            current_start_dt = datetime.combine(current_start, time.min, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
+            current_end_dt = datetime.combine(current_end, time.max, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
             current_stmt = select(func.count(FeedbackRecord.id)).where(
                 and_(
                     effective_date >= current_start_dt,
@@ -128,8 +138,8 @@ class AnalyticsService:
             current_count = current_result.scalar() or 0
 
             # Previous period count
-            prev_start_dt = datetime.combine(prev_start, datetime.min.time())
-            prev_end_dt = datetime.combine(prev_end, datetime.max.time())
+            prev_start_dt = datetime.combine(prev_start, time.min, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
+            prev_end_dt = datetime.combine(prev_end, time.max, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
             prev_stmt = select(func.count(FeedbackRecord.id)).where(
                 and_(
                     effective_date >= prev_start_dt,
@@ -511,9 +521,9 @@ class AnalyticsService:
         # Use effective date: created_at_source (original date from source) with fallback to created_at
         effective_date = func.coalesce(FeedbackRecord.created_at_source, FeedbackRecord.created_at)
 
-        # Build date filter conditions
-        start_datetime = datetime.combine(start_date, datetime.min.time())
-        end_datetime = datetime.combine(end_date, datetime.max.time())
+        # Build date filter conditions (convert Bangkok local time to UTC)
+        start_datetime = datetime.combine(start_date, time.min, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
+        end_datetime = datetime.combine(end_date, time.max, tzinfo=APP_TIMEZONE).astimezone(ZoneInfo("UTC"))
 
         # Build the GROUP BY expression based on granularity
         if granularity == 'daily':

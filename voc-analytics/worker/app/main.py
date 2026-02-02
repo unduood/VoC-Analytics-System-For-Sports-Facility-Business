@@ -110,6 +110,32 @@ ASPECT_MAPPING = {
     "amenities": "amenities",
 }
 
+# Ordered list of (rating_field, aspect_label) tuples for Google Forms
+# Order matches existing AspectLabel enum/convention in the project:
+# equipment → staff → cleanliness → atmosphere → price → location → programs → amenities
+GOOGLE_FORM_ASPECT_MAPPING = [
+    ("equipment_rating", "equipment"),
+    ("staff_rating", "staff"),
+    ("cleanliness_rating", "cleanliness"),
+    ("atmosphere_rating", "atmosphere"),
+    ("price_rating", "price"),
+    ("location_rating", "location"),
+    ("program_rating", "programs"),
+    ("amenities_rating", "amenities"),
+]
+
+# Thai labels for aspects (used in analysis_summary for frontend display)
+ASPECT_THAI_MAP = {
+    "equipment": "อุปกรณ์",
+    "staff": "พนักงาน",
+    "cleanliness": "ความสะอาด",
+    "atmosphere": "บรรยากาศ",
+    "price": "ราคา",
+    "location": "ทำเล",
+    "programs": "โปรแกรม",
+    "amenities": "สิ่งอำนวยความสะดวก",
+}
+
 
 def normalize_sentiment(value: str) -> str:
     """Normalize sentiment label to match backend enum"""
@@ -171,7 +197,105 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             )
             await db.commit()
 
-            # 3. Check if this is Google Maps review with rating
+            # 3. Check if Google Form source (NO ML processing - all rating-based)
+            is_google_form = feedback.source_type == "google_form"
+
+            if is_google_form:
+                # ============================================================
+                # GOOGLE FORM: Rating-based analysis (NO ML processing)
+                # ============================================================
+                logger.info("Processing Google Form feedback with rating-based analysis")
+                raw_data = feedback.raw_data or {}
+
+                # 3a. Sentiment from overall_rating
+                overall_rating = raw_data.get("overall_rating")
+                sentiment_label = rating_to_sentiment(overall_rating) if overall_rating else "neutral"
+                sentiment_result = SentimentResult(
+                    feedback_id=record_id,
+                    sentiment=sentiment_label,
+                    confidence=1.0,
+                    source='rating'
+                )
+                db.add(sentiment_result)
+                logger.info(f"Sentiment from overall_rating={overall_rating}: {sentiment_label}")
+
+                # 3b. NO Intent results for Google Forms
+
+                # 3c. Aspect results from each rating field (in specified order)
+                stored_aspects = []
+                for rating_field, aspect_label in GOOGLE_FORM_ASPECT_MAPPING:
+                    rating = raw_data.get(rating_field)
+                    if rating is not None:
+                        aspect_sentiment = rating_to_sentiment(rating)
+                        aspect_result = AspectSentimentResult(
+                            feedback_id=record_id,
+                            aspect=aspect_label,
+                            sentiment=aspect_sentiment,
+                            confidence=1.0,
+                            source='rating'
+                        )
+                        db.add(aspect_result)
+                        stored_aspects.append({
+                            "aspect": aspect_label,
+                            "aspect_thai": ASPECT_THAI_MAP.get(aspect_label, aspect_label),
+                            "sentiment": aspect_sentiment,
+                            "confidence": 1.0,
+                            "rating": rating,
+                            "source": "rating",
+                            "edited": False
+                        })
+
+                logger.info(f"Created {len(stored_aspects)} aspect results from ratings")
+
+                # 3d. Build analysis_summary (NO intents key for Google Forms)
+                analysis_summary = {
+                    "sentiment": {
+                        "label": sentiment_label,
+                        "confidence": 1.0,
+                        "source": "rating",
+                        "rating": overall_rating,
+                        "edited": False
+                    },
+                    "aspects": stored_aspects,
+                    "summary_stats": {
+                        "total_aspects_analyzed": len(stored_aspects),
+                        "aspects_with_sentiment": len(stored_aspects),
+                        "positive_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'positive'),
+                        "negative_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'negative'),
+                        "neutral_aspects": sum(1 for a in stored_aspects if a['sentiment'] == 'neutral'),
+                        "rating_based": True,
+                        "model_predictions": 0,
+                        "user_corrections": 0,
+                        "user_additions": 0
+                    }
+                }
+
+                # 3e. Update status to 'completed' and store analysis_summary
+                await db.execute(
+                    update(FeedbackRecord)
+                    .where(FeedbackRecord.id == record_id)
+                    .values(
+                        processing_status="completed",
+                        analysis_summary=analysis_summary
+                    )
+                )
+                await db.commit()
+                logger.info(f"✅ Successfully processed Google Form feedback: {record_id}")
+
+                # 3f. Broadcast analysis completed event
+                publish_analysis_completed(
+                    feedback_id=record_id,
+                    source_type=feedback.source_type,
+                    analysis_summary=analysis_summary
+                )
+
+                return True
+
+            # ============================================================
+            # OTHER SOURCES: ML-based analysis (Google Maps, Email, etc.)
+            # ============================================================
+
+            # 4. Check if this is Google Maps review with rating
             is_google_maps = feedback.source_type == "google_maps"
             rating = feedback.raw_data.get("rating") if feedback.raw_data else None
             use_rating_sentiment = is_google_maps and rating is not None
@@ -179,7 +303,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             logger.info("Running ML analysis...")
             nlp_service = get_nlp_service()
 
-            # 4a. Sentiment Analysis - Rating-based OR Model-based
+            # 5a. Sentiment Analysis - Rating-based OR Model-based
             if use_rating_sentiment:
                 # RATING-BASED SENTIMENT (Bypass ML Model)
                 sentiment_label = rating_to_sentiment(rating)
@@ -200,13 +324,13 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                     f"({sentiment_result_data['confidence']:.2%})"
                 )
 
-            # 4b. Intent Analysis (ALWAYS run model)
+            # 5b. Intent Analysis (ALWAYS run model)
             intent_result_data = nlp_service.intent.classify(feedback.text_content)
 
-            # 4c. ABSA Analysis (ALWAYS run model)
+            # 5c. ABSA Analysis (ALWAYS run model)
             aspect_results_data = nlp_service.absa.analyze(feedback.text_content, include_none=True)
 
-            # 5. Store sentiment result with correct source
+            # 6. Store sentiment result with correct source
             normalized_sentiment = normalize_sentiment(sentiment_result_data['label'])
             sentiment_result = SentimentResult(
                 feedback_id=record_id,
@@ -221,7 +345,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 f"[source: {'rating' if use_rating_sentiment else 'model'}]"
             )
 
-            # 6. Store intent results (multi-label, can have multiple intents)
+            # 7. Store intent results (multi-label, can have multiple intents)
             # If no intents detected, store primary intent anyway
             if intent_result_data['labels']:
                 normalized_intents = []
@@ -249,7 +373,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 db.add(intent_result)
                 logger.info(f"Intent (primary): {normalized_primary} ({intent_result_data['probabilities'][primary]:.2%})")
 
-            # 7. Store aspect sentiment results (Hybrid++: exclude 'none')
+            # 8. Store aspect sentiment results (Hybrid++: exclude 'none')
             stored_aspects = []
             for aspect in aspect_results_data:
                 if aspect['sentiment'] != 'none':  # Only store aspects with sentiment
@@ -273,7 +397,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
             # Count aspects for logging
             logger.info(f"Aspects analyzed: {len(aspect_results_data)} total, {len(stored_aspects)} with sentiment stored (excluded {len(aspect_results_data) - len(stored_aspects)} with sentiment='none')")
 
-            # 8. Build and store analysis summary (JSONB) - Hybrid++ approach
+            # 9. Build and store analysis summary (JSONB) - Hybrid++ approach
             # Use normalized values for summary
             summary_intents = normalized_intents if intent_result_data['labels'] else [normalized_primary]
             analysis_summary = {
@@ -323,7 +447,7 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
 
             logger.info(f"Summary: {len(stored_aspects)} aspects with sentiment (P:{analysis_summary['summary_stats']['positive_aspects']} N:{analysis_summary['summary_stats']['negative_aspects']} Neu:{analysis_summary['summary_stats']['neutral_aspects']})")
 
-            # 9. Update status to 'completed' and store analysis_summary
+            # 10. Update status to 'completed' and store analysis_summary
             await db.execute(
                 update(FeedbackRecord)
                 .where(FeedbackRecord.id == record_id)
@@ -333,11 +457,11 @@ async def process_feedback_analysis(record_id: UUID) -> bool:
                 )
             )
 
-            # 10. Commit all changes
+            # 11. Commit all changes
             await db.commit()
             logger.info(f"✅ Successfully processed feedback: {record_id}")
 
-            # 11. Broadcast analysis completed event via WebSocket
+            # 12. Broadcast analysis completed event via WebSocket
             publish_analysis_completed(
                 feedback_id=record_id,
                 source_type=feedback.source_type,

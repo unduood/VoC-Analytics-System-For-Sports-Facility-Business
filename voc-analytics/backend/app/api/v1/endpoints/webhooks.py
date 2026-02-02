@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import json
 import logging
+import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime
 from collections import deque
@@ -22,6 +23,7 @@ from app.schemas.webhooks import (
     EmailWebhookPayload,
     InstagramWebhookPayload,
     FacebookWebhookPayload,
+    GoogleFormWebhookPayload,
     WebhookResponse
 )
 from app.services.ingestion import IngestionService
@@ -303,6 +305,108 @@ async def receive_instagram_webhook(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error processing Instagram webhook"
+        )
+
+
+@router.post("/google-form", response_model=WebhookResponse, status_code=status.HTTP_200_OK)
+async def receive_google_form_webhook(
+    payload: GoogleFormWebhookPayload,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_webhook_token)
+):
+    """
+    Receive Google Form survey response webhook
+
+    This endpoint receives survey data with ratings, creates a feedback record,
+    and publishes it to the processing queue. Unlike other sources, Google Forms
+    responses use rating-based analysis instead of ML processing.
+
+    **Authentication:** Requires X-Webhook-Token header
+
+    **Request Body:**
+    - Demographics: gender, age_group, timestamp, membership_type, visit_frequency, preferred_period
+    - Text: additional_suggestions (optional)
+    - Ratings (1-5): overall_rating, equipment_rating, staff_rating, cleanliness_rating,
+                     atmosphere_rating, price_rating, location_rating, program_rating, amenities_rating
+
+    **Returns:**
+    - status: Response status
+    - message: Success message
+    - record_id: Created feedback record UUID
+    - source_type: "google_form"
+    """
+    # Generate UUID for source_id (no deduplication for survey responses)
+    source_id = str(uuid.uuid4())
+    logger.info(f"Received Google Form webhook, generated source_id: {source_id}")
+
+    try:
+        # Create ingestion service
+        ingestion_service = IngestionService(db)
+
+        # Build text content
+        text_content = "[แบบสอบถาม Google Forms]"
+        if payload.additional_suggestions:
+            text_content = f"{text_content} {payload.additional_suggestions}"
+
+        # Build raw_data with all 16 fields (flat structure)
+        raw_data = {
+            # Demographics
+            "gender": payload.gender,
+            "age_group": payload.age_group,
+            "timestamp": payload.timestamp.isoformat(),
+            "membership_type": payload.membership_type,
+            "visit_frequency": payload.visit_frequency,
+            "preferred_period": payload.preferred_period,
+            # Optional text
+            "additional_suggestions": payload.additional_suggestions,
+            # Ratings
+            "overall_rating": payload.overall_rating,
+            "equipment_rating": payload.equipment_rating,
+            "staff_rating": payload.staff_rating,
+            "cleanliness_rating": payload.cleanliness_rating,
+            "atmosphere_rating": payload.atmosphere_rating,
+            "price_rating": payload.price_rating,
+            "location_rating": payload.location_rating,
+            "program_rating": payload.program_rating,
+            "amenities_rating": payload.amenities_rating,
+        }
+
+        # Create feedback record and publish to queue
+        record = await ingestion_service.ingest_and_publish(
+            source_type="google_form",
+            source_id=source_id,
+            text_content=text_content,
+            raw_data=raw_data,
+            created_at_source=payload.timestamp
+        )
+
+        # Broadcast new feedback event via WebSocket
+        await broadcast_new_feedback(
+            feedback_id=record.id,
+            source_type="google_form",
+            text_content=text_content
+        )
+
+        logger.info(f"Successfully processed Google Form webhook: {record.id}")
+
+        return WebhookResponse(
+            status="success",
+            message="Google Form response received and queued for processing",
+            record_id=record.id,
+            source_type="google_form"
+        )
+
+    except (DatabaseError, QueuePublishError) as e:
+        logger.error(f"Error processing Google Form webhook: {e}")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.message
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error processing Google Form webhook: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error processing Google Form webhook"
         )
 
 

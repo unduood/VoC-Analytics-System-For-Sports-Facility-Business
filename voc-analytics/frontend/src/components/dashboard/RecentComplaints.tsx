@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, Mail, MessageCircle } from 'lucide-react';
+import { AlertTriangle, FileText, Mail, MessageCircle } from 'lucide-react';
 import type { RecentComplaint, SourceType } from '@/lib/types';
 import { formatRelativeTime, getSourceLabel, getSourceBadgeColor, getAspectLabel, truncateText } from '@/lib/utils';
 import { cn } from '@/lib/utils';
@@ -32,6 +32,8 @@ function SourceIcon({ source, className }: { source: SourceType; className?: str
           <path d="M12 0C7.802 0 4 3.403 4 7.602c0 .86.194 1.666.459 2.434l7.199 13.323a.39.39 0 00.684 0l7.199-13.323c.265-.768.459-1.574.459-2.434C20 3.403 16.198 0 12 0zm0 10.5c-1.657 0-3-1.343-3-3s1.343-3 3-3 3 1.343 3 3-1.343 3-3 3z" />
         </svg>
       );
+    case 'google_form':
+      return <FileText className={className} />;
     default:
       return <MessageCircle className={className} />;
   }

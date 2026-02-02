@@ -5,7 +5,8 @@ import logging
 from typing import Optional
 from uuid import UUID
 from math import ceil
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, delete, exists, and_, or_
@@ -86,14 +87,17 @@ async def list_feedback(
             filter_conditions.append(FeedbackRecord.text_content.ilike(f"%{search}%"))
 
         # Date range filters using effective_date (created_at_source with fallback)
+        # Dates are interpreted as Bangkok timezone (Asia/Bangkok) and converted to UTC
+        app_tz = ZoneInfo("Asia/Bangkok")
+        utc_tz = ZoneInfo("UTC")
         if start_date:
-            # Start of the day (00:00:00)
-            start_datetime = datetime.combine(start_date, datetime.min.time())
+            # Start of the day in Bangkok, converted to UTC
+            start_datetime = datetime.combine(start_date, time.min, tzinfo=app_tz).astimezone(utc_tz)
             filter_conditions.append(effective_date >= start_datetime)
         if end_date:
-            # End of the day (use next day's start for exclusive upper bound)
-            end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
-            filter_conditions.append(effective_date < end_datetime)
+            # End of the day in Bangkok (23:59:59.999999), converted to UTC
+            end_datetime = datetime.combine(end_date, time.max, tzinfo=app_tz).astimezone(utc_tz)
+            filter_conditions.append(effective_date <= end_datetime)
 
         # Sentiment filter (using EXISTS subquery)
         if sentiment:

@@ -88,11 +88,8 @@ export function AnalysisSourceLabel({
     : 'text-sm px-2.5 py-1.5';
   const iconSize = size === 'sm' ? 'w-3 h-3' : 'w-4 h-4';
 
-  // Build the label text
-  let labelText = config.label;
-  if (source === 'rating' && ratingValue !== null && ratingValue !== undefined) {
-    labelText = `${config.shortLabel} (${ratingValue} ดาว)`;
-  }
+  // Always use the standard label for consistency
+  const labelText = config.label;
 
   return (
     <div className="inline-flex items-center gap-1.5 group relative">

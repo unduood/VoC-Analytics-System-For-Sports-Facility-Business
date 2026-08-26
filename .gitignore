@@ -47,6 +47,9 @@ venv.bak/
 # Claude Code
 .claude/
 
+# AI assistant context (internal reference)
+AI_CONTEXT.md
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -97,6 +100,7 @@ test_*.json
 
 # Personal notebooks and scratch work
 *.ipynb
+!thai_nlp_inference_unified.ipynb
 
 # Draft documentation (work-in-progress)
 DATABASE_SCHEMA_IMPROVEMENT.md

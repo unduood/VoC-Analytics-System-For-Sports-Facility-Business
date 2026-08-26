@@ -301,6 +301,14 @@ Direct webhook integration with [Facebook Graph API](https://developers.facebook
 - HMAC-SHA256 signature validation (`X-Hub-Signature-256`)
 - Handles comment `add`, `edited`, and `remove` events
 
+### Google Forms
+
+Receives structured survey responses via webhook (`POST /api/v1/webhooks/google-form`):
+
+- Accepts 1–5 satisfaction ratings for overall experience and 8 facility aspects (equipment, staff, cleanliness, etc.)
+- Ratings are converted directly to sentiment (1–2 → negative, 3 → neutral, 4–5 → positive) — **no ML inference needed**
+- Supports optional demographic fields (age group, visit frequency)
+
 ### Google Maps Reviews
 
 Fetches reviews via [SerpAPI](https://serpapi.com/) with smart delta updates (detects edited reviews, re-analyzes changed content).

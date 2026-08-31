@@ -1,3 +1,6 @@
+<img width="2245" height="3179" alt="poster - Voice of Customer Analytics System For Sports Facility Business" src="https://github.com/user-attachments/assets/51e8149c-9ed2-4014-8ba6-40a4b8759af9" />
+
+
 <div align="center">
 
 # 🏟️ VoC Analytics System for Sports Facility Business
@@ -122,20 +125,16 @@ Not all sources need full ML inference:
 
 ## 📸 Screenshots
 
-<!-- 
-Add your screenshots here. Recommended format:
 
-### Dashboard
-![Dashboard Overview](docs/screenshots/dashboard.png)
+<img width="1093" height="852" alt="Screenshot 2026-09-01 012912" src="https://github.com/user-attachments/assets/d9412acc-5029-4de5-b28a-c3560c7ea9d1" />
 
-### Feedback Records
-![Records Page](docs/screenshots/records.png)
+<img width="1068" height="748" alt="Screenshot 2026-09-01 012928" src="https://github.com/user-attachments/assets/c80ce778-7e0d-4f78-8031-9d091e467ea2" />
 
-### Analysis Editor (Human-in-the-Loop)
-![HITL Editor](docs/screenshots/hitl-editor.png)
--->
+<img width="1678" height="897" alt="image03" src="https://github.com/user-attachments/assets/0826858a-47bb-4eb3-b755-d48940916275" />
 
-> 🚧 *Screenshots coming soon*
+<img width="1642" height="897" alt="image04" src="https://github.com/user-attachments/assets/44577a0a-ea4b-4607-bb3a-27942138d2b9" />
+
+<img width="1661" height="903" alt="image05" src="https://github.com/user-attachments/assets/cf765253-65b8-4d67-8621-75c82a9b9d4b" />
 
 ---
 
